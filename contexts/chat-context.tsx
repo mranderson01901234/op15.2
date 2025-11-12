@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 export interface Message {
   id: string;
@@ -53,9 +54,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const { userId, isLoaded: authLoaded } = useAuth();
 
   // Load chats and activeChatId from localStorage after mount (client-side only)
+  // Only load if user is authenticated
   useEffect(() => {
+    if (!authLoaded) return; // Wait for auth to load
+    
+    // If user is not authenticated, clear any existing chats and don't load from localStorage
+    if (!userId) {
+      setChats([]);
+      setActiveChatId(null);
+      // Clear localStorage to prevent stale data
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(ACTIVE_CHAT_KEY);
+      } catch (error) {
+        console.error("Failed to clear localStorage:", error);
+      }
+      setIsHydrated(true);
+      return;
+    }
+
+    // User is authenticated - load chats from localStorage
     try {
       const storedChats = localStorage.getItem(STORAGE_KEY);
       if (storedChats) {
@@ -72,7 +93,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsHydrated(true);
     }
-  }, []); // Only run once on mount
+  }, [authLoaded, userId]); // Re-run when auth state changes
 
   // Save chats to localStorage whenever they change (but only after hydration)
   useEffect(() => {

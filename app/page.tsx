@@ -17,7 +17,8 @@ import { useChat, type Message as ChatMessage } from "@/contexts/chat-context";
 import { useChatInput } from "@/contexts/chat-input-context";
 import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { CommandsButton } from "@/components/layout/commands-button";
-import { UserButton, SignedIn } from "@clerk/nextjs";
+import { SignedIn, useAuth } from "@clerk/nextjs";
+import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
 
 interface Thumbnail {
   src: string;
@@ -151,6 +152,15 @@ function renderTextWithHighlighting(
   return <>{parts}</>;
 }
 
+// Prevent orphaned words by keeping last two words together
+function preventOrphanedWords(text: string): string {
+  const words = text.trim().split(/\s+/);
+  if (words.length <= 2) return text;
+  // Replace last space with non-breaking space to keep last two words together
+  const lastTwoWords = words.slice(-2).join('\u00A0'); // \u00A0 is non-breaking space
+  return words.slice(0, -2).join(' ') + ' ' + lastTwoWords;
+}
+
 // Format message content with code blocks, headers, and better structure
 function formatMessageContent(content: string): React.ReactElement {
   const parts: React.ReactElement[] = [];
@@ -193,6 +203,8 @@ function formatMessageContent(content: string): React.ReactElement {
       const lines = segment.content.split('\n');
       const textParts: React.ReactElement[] = [];
       let currentParagraph: string[] = [];
+      let lastNumberedSectionIndex = -1;
+      let contentAfterLastNumberedSection = '';
 
       lines.forEach((line, idx) => {
         const trimmedLine = line.trim();
@@ -200,11 +212,16 @@ function formatMessageContent(content: string): React.ReactElement {
         // Headers (## or ###)
         if (trimmedLine.startsWith('###')) {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
           textParts.push(
@@ -212,13 +229,22 @@ function formatMessageContent(content: string): React.ReactElement {
               {trimmedLine.replace(/^###\s*/, '')}
             </h3>
           );
+          // Track content after numbered sections
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += trimmedLine + ' ';
+          }
         } else if (trimmedLine.startsWith('##')) {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
           textParts.push(
@@ -229,15 +255,24 @@ function formatMessageContent(content: string): React.ReactElement {
               <div className="h-px bg-gradient-to-r from-border/60 via-border/30 to-transparent mb-3"></div>
             </Fragment>
           );
+          // Track content after numbered sections
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += trimmedLine + ' ';
+          }
         }
         // Introductory lines ending with colon (e.g., "This includes things like:")
         else if (trimmedLine.endsWith(':') && trimmedLine.length > 10 && trimmedLine.length < 100) {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
           textParts.push(
@@ -245,55 +280,89 @@ function formatMessageContent(content: string): React.ReactElement {
               {formatInlineContent(trimmedLine)}
             </p>
           );
+          // Track content after numbered sections
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += trimmedLine + ' ';
+          }
         }
         // Numbered lists (1., 2., 3., etc. - handles both plain and bold formatted numbers)
         else if (/^\d+\.\s/.test(trimmedLine)) {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
+          
+          // Check if we have substantial content after the last numbered section
+          // If so, add extra spacing before this numbered section
+          const hasLargeContentAfterPrevious = contentAfterLastNumberedSection.length > 200;
+          const shouldAddExtraSpacing = lastNumberedSectionIndex >= 0 && hasLargeContentAfterPrevious;
+          
           // Match numbered list items - extract number and content
           const numberMatch = trimmedLine.match(/^(\d+)\.\s*(.*)/);
           if (numberMatch) {
             const number = numberMatch[1];
             const content = numberMatch[2];
             textParts.push(
-              <div key={`num-li-${key++}`} className="flex items-start gap-3 mb-3 ml-1">
+              <div key={`num-li-${key++}`} className={`flex items-start gap-3 ${shouldAddExtraSpacing ? 'mt-8' : ''} mb-3 ml-1`}>
                 <span className="text-primary font-medium mt-0.5 min-w-[1.5rem]">{number}.</span>
                 <span className="flex-1 leading-[1.8] text-[15px]">{formatInlineContent(content.trim())}</span>
               </div>
             );
           }
+          
+          // Reset tracking for this new numbered section
+          lastNumberedSectionIndex = idx;
+          contentAfterLastNumberedSection = '';
         }
         // Bullet points
         else if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
+          const bulletText = trimmedLine.replace(/^[-*]\s*/, '');
           textParts.push(
             <div key={`li-${key++}`} className="flex items-start gap-2 mb-2.5 ml-2">
               <span className="text-primary mt-1.5">•</span>
-              <span className="flex-1 leading-[1.8] text-[15px]">{formatInlineContent(trimmedLine.replace(/^[-*]\s*/, ''))}</span>
+              <span className="flex-1 leading-[1.8] text-[15px]">{formatInlineContent(bulletText)}</span>
             </div>
           );
+          // Track content after numbered sections
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += bulletText + ' ';
+          }
         }
         // Empty line - paragraph break
         else if (trimmedLine === '') {
           if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
             textParts.push(
               <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
-                {formatInlineContent(currentParagraph.join(' '))}
+                {formatInlineContent(paragraphText)}
               </p>
             );
+            // Track content after numbered sections
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
             currentParagraph = [];
           }
         }
@@ -306,6 +375,10 @@ function formatMessageContent(content: string): React.ReactElement {
       // Add remaining paragraph
       if (currentParagraph.length > 0) {
         const paragraphText = currentParagraph.join(' ');
+        // Track content after numbered sections
+        if (lastNumberedSectionIndex >= 0) {
+          contentAfterLastNumberedSection += paragraphText + ' ';
+        }
         // Split very long paragraphs (over 500 chars) into smaller chunks for better readability
         if (paragraphText.length > 500) {
           const sentences = paragraphText.match(/[^.!?]+[.!?]+/g) || [paragraphText];
@@ -841,6 +914,7 @@ export default function Home() {
   const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser } = useWorkspace();
   const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
   const { setInsertTextHandler, setSendMessageHandler } = useChatInput();
+  const { userId, isLoaded: authLoaded } = useAuth();
 
   // Ensure component is mounted (client-side only) to prevent hydration issues
   useEffect(() => {
@@ -1237,32 +1311,62 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Auto-scroll when user sends a message
+  // Auto-scroll when user sends a message (only when not loading/processing)
   useEffect(() => {
-    if (!isLoading && !isProcessing) {
-      scrollToBottom();
+    if (!isLoading && !isProcessing && messages.length > 0) {
+      // Only scroll to bottom if we're not in the middle of streaming
+      // Check if the last message is from user (meaning they just sent it)
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage && lastMessage.role === "user") {
+        scrollToBottom();
+      }
     }
-  }, [messages.length]);
+  }, [messages.length, isLoading, isProcessing]);
+
+  // Track if we've already scrolled to user message to prevent repeated scrolling
+  const hasScrolledToUserMessageRef = useRef(false);
 
   // Scroll last user message to top when LLM response starts
   useEffect(() => {
     const isLoadingStarted = (isLoading || isProcessing) && (!prevIsLoadingRef.current && !prevIsProcessingRef.current);
     
-    if (isLoadingStarted && lastUserMessageRef.current && messagesContainerRef.current) {
-      // Calculate the position relative to the scroll container
-      const container = messagesContainerRef.current;
-      const messageElement = lastUserMessageRef.current;
-      const containerRect = container.getBoundingClientRect();
-      const messageRect = messageElement.getBoundingClientRect();
-      const containerPadding = 16; // p-4 = 16px
+    // Reset scroll flag when loading stops
+    if (!isLoading && !isProcessing) {
+      hasScrolledToUserMessageRef.current = false;
+    }
+    
+    // Scroll when loading starts (only once per loading session)
+    if (isLoadingStarted && !hasScrolledToUserMessageRef.current && lastUserMessageRef.current && messagesContainerRef.current) {
+      hasScrolledToUserMessageRef.current = true;
       
-      // Calculate scroll position: current scroll + difference in positions - padding
-      const scrollTop = container.scrollTop + (messageRect.top - containerRect.top) - containerPadding;
-      
-      // Scroll to position the message at the top of the visible area
-      container.scrollTo({
-        top: Math.max(0, scrollTop),
-        behavior: "smooth"
+      // Use multiple requestAnimationFrames + delay to ensure DOM has fully updated
+      // This ensures the assistant message placeholder has been added
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const messageElement = lastUserMessageRef.current;
+            const container = messagesContainerRef.current;
+            
+            if (!messageElement || !container) return;
+            
+            // Use getBoundingClientRect for more reliable positioning
+            const containerRect = container.getBoundingClientRect();
+            const messageRect = messageElement.getBoundingClientRect();
+            
+            // Calculate how much we need to scroll DOWN (increase scrollTop) to move content UP
+            // This positions the user message at the top of the visible area
+            const containerPadding = 16; // p-4 = 16px
+            const currentScrollTop = container.scrollTop;
+            const messageOffsetFromContainerTop = messageRect.top - containerRect.top;
+            const targetScrollTop = currentScrollTop + messageOffsetFromContainerTop - containerPadding;
+            
+            // Scroll DOWN (increase scrollTop) to move the user message UP to the top
+            container.scrollTo({
+              top: Math.max(0, targetScrollTop),
+              behavior: "smooth"
+            });
+          }, 150); // Delay to ensure DOM is fully updated and assistant message is rendered
+        });
       });
     }
     
@@ -1270,14 +1374,72 @@ export default function Home() {
     prevIsProcessingRef.current = isProcessing;
   }, [isLoading, isProcessing]);
 
-  // Auto-scroll during streaming when content updates
+  // Track when we should start auto-scrolling down (after initial scroll-to-top completes)
+  const shouldAutoScrollDownRef = useRef(false);
+  
+  // Set flag to start auto-scrolling down after initial scroll-to-top delay
   useEffect(() => {
-    if ((isLoading || isProcessing) && isNearBottom()) {
-      // Use requestAnimationFrame for smoother scrolling during updates
-      const rafId = requestAnimationFrame(() => {
-        scrollToBottom();
+    if ((isLoading || isProcessing) && hasScrolledToUserMessageRef.current) {
+      // Wait for initial scroll-to-top to complete (~500ms for smooth scroll)
+      const timeoutId = setTimeout(() => {
+        shouldAutoScrollDownRef.current = true;
+      }, 550);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        shouldAutoScrollDownRef.current = false;
+      };
+    } else {
+      shouldAutoScrollDownRef.current = false;
+    }
+  }, [isLoading, isProcessing]);
+
+  // Auto-scroll during streaming to follow the response as it grows
+  // For longer responses: stop scrolling once user's last message reaches just before the header (around top:100)
+  // The response will continue streaming below the input box without auto-scrolling
+  useEffect(() => {
+    if ((isLoading || isProcessing) && shouldAutoScrollDownRef.current && messagesContainerRef.current && messagesEndRef.current && lastUserMessageRef.current) {
+      // Use requestAnimationFrame for smoother scrolling
+      requestAnimationFrame(() => {
+        const container = messagesContainerRef.current;
+        const messageElement = lastUserMessageRef.current;
+        const endElement = messagesEndRef.current;
+        
+        if (!container || !messageElement || !endElement) return;
+        
+        // Check if this is a longer response by checking:
+        // 1. Content length of the last assistant message (if exists)
+        // 2. Scroll position - if we've scrolled significantly, it's likely a longer response
+        const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
+        const isLongResponse = lastAssistantMessage 
+          ? (lastAssistantMessage.content?.length || 0) > 500 // Consider >500 chars as "long"
+          : container.scrollHeight > container.clientHeight * 1.5; // Or if content is 1.5x viewport height
+        
+        // Check position of user's last message relative to container top
+        const containerRect = container.getBoundingClientRect();
+        const messageRect = messageElement.getBoundingClientRect();
+        const messageTopFromContainer = messageRect.top - containerRect.top;
+        
+        // Target position: stop scrolling sooner to keep user message further from header
+        const targetTop = 150;
+        const tolerance = 30; // Allow some tolerance
+        
+        // For longer responses: stop scrolling when user message is about to reach the header
+        // This allows the response to continue streaming below the input box without auto-scrolling
+        if (isLongResponse && messageTopFromContainer < targetTop + tolerance) {
+          // User message is at or near the header position, stop scrolling
+          // The response will continue streaming below the input box
+          return;
+        }
+        
+        // For shorter responses or when user message is below header position:
+        // Continue auto-scrolling to follow the streaming response
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distanceFromBottom > 50) {
+          // Scroll down to follow the streaming response
+          endElement.scrollIntoView({ behavior: "smooth", block: "end" });
+        }
       });
-      return () => cancelAnimationFrame(rafId);
     }
   }, [messages, isLoading, isProcessing]);
 
@@ -1357,14 +1519,37 @@ export default function Home() {
     });
   }, [setInsertTextHandler]);
 
-  // Register send message handler
+  // Use refs to avoid recreating handler on every render
+  const isLoadingRef = useRef(isLoading);
+  const activeChatIdRef = useRef(activeChatId);
+  const messagesRef = useRef(messages);
+  const attachedPDFsRef = useRef(attachedPDFs);
+  
+  // Keep refs up to date
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
+  
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
+  
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  
+  useEffect(() => {
+    attachedPDFsRef.current = attachedPDFs;
+  }, [attachedPDFs]);
+
+  // Register send message handler (only recreate when stable dependencies change)
   useEffect(() => {
     setSendMessageHandler(async (text: string) => {
-      if (!text.trim() || isLoading) return;
+      if (!text.trim() || isLoadingRef.current) return;
 
       // Ensure we have an active chat
-      let currentChatId = activeChatId;
-      let currentMessages = messages;
+      let currentChatId = activeChatIdRef.current;
+      let currentMessages = messagesRef.current;
       
       if (!currentChatId) {
         currentChatId = createChat();
@@ -1435,7 +1620,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             message: userInput,
-            pdfs: attachedPDFs.length > 0 ? attachedPDFs : undefined,
+            pdfs: attachedPDFsRef.current.length > 0 ? attachedPDFsRef.current : undefined,
             history: conversationHistory,
             currentMessageImages: imageToInclude ? [imageToInclude] : undefined,
             editorState: {
@@ -1581,10 +1766,14 @@ export default function Home() {
         setIsProcessing(false);
       }
     });
-  }, [setSendMessageHandler, isLoading, activeChatId, messages, createChat, updateChatMessages, editorState, openFile, updateEditorContent]);
+  }, [setSendMessageHandler, createChat, updateChatMessages, editorState, openFile, updateEditorContent]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    // Don't allow sending messages if user is not authenticated
+    if (!authLoaded || !userId) {
+      return;
+    }
     if ((!input.trim() && attachedPDFs.length === 0) || isLoading) return;
 
     // Close image viewer when submitting a new message so user can see their input clearly
@@ -1965,7 +2154,7 @@ export default function Home() {
               >
                 <div
                   className={`${
-                    message.role === "user" ? "max-w-[75%]" : "max-w-[92%]"
+                    message.role === "user" ? "" : "max-w-[92%]"
                   } group relative ${
                     message.role === "assistant"
                       ? "pr-3 py-3 rounded-r-sm hover:bg-muted/20"
@@ -1979,6 +2168,7 @@ export default function Home() {
                     animation: 'fadeIn 0.3s ease-in-out',
                     animationFillMode: 'backwards',
                     animationDelay: `${index * 0.05}s`,
+                    maxWidth: 'min(75%, 65ch)', // Slightly wider to prevent orphaned words
                   }}
                 >
                   {/* Formatted Search Response */}
@@ -2064,31 +2254,44 @@ export default function Home() {
                   )}
                   {/* Regular content (only show if no formatted search) */}
                   {message.content && !message.formattedSearch && (
-                    <div className="space-y-2">
+                    <div className={message.role === "user" ? "space-y-1" : "space-y-2"}>
                       <div
                         data-message-id={message.id}
-                        className={`break-words max-w-none ${
+                        className={`break-words ${
                           message.role === "user"
-                            ? "text-base font-medium text-yellow-100 text-right"
-                            : `text-[15px] text-foreground/90 text-left ${animationClass}`
+                            ? "text-base font-medium text-yellow-100 text-left w-full"
+                            : `text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`
                         }`}
                         style={{
-                          lineHeight: "1.8",
-                          whiteSpace: "pre-wrap",
+                          lineHeight: message.role === "user" ? "1.5" : "1.8",
+                          whiteSpace: message.role === "user" ? "normal" : "pre-wrap",
                           wordSpacing: "normal",
-                          letterSpacing: "0.01em",
-                          textAlign: message.role === "user" ? "right" : "left",
-                        }}
+                          letterSpacing: message.role === "user" ? "0" : "0.01em",
+                          textAlign: message.role === "user" ? "left" : "left",
+                          wordBreak: message.role === "user" ? "break-word" : "normal",
+                          overflowWrap: message.role === "user" ? "break-word" : "normal",
+                          textWrap: message.role === "user" ? "balance" : "normal",
+                        } as React.CSSProperties}
                       >
                         {formatMessageContent(
-                          // Filter out "Imagen 4" or "Imagen" references and generation messages from content
-                          message.content
-                            .replace(/\bImagen\s*4\b/gi, '')
-                            .replace(/\bImagen\b/gi, '')
-                            .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
-                            .replace(/I've\s+generated\s+\d+\s+image/i, '')
-                            .replace(/Here's?\s+the\s+generated\s+image/i, '')
-                            .trim()
+                          message.role === "user"
+                            ? preventOrphanedWords(
+                                // Filter out "Imagen 4" or "Imagen" references and generation messages from content
+                                message.content
+                                  .replace(/\bImagen\s*4\b/gi, '')
+                                  .replace(/\bImagen\b/gi, '')
+                                  .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                  .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                  .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                  .trim()
+                              )
+                            : message.content
+                                .replace(/\bImagen\s*4\b/gi, '')
+                                .replace(/\bImagen\b/gi, '')
+                                .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                .trim()
                         )}
                       </div>
                       {/* Timestamp - only for assistant */}
@@ -2279,12 +2482,12 @@ export default function Home() {
                 autoResizeTextarea();
               }}
               onKeyDown={handleKeyDown}
-              disabled={isLoading}
+              disabled={isLoading || !authLoaded || !userId}
             />
             <ArrowUp
               onClick={() => handleSubmit()}
               className={`absolute top-1/2 -translate-y-1/2 left-3 h-6 w-6 text-orange-500 transition-opacity ${
-                isLoading || (!input.trim() && attachedPDFs.length === 0)
+                isLoading || !authLoaded || !userId || (!input.trim() && attachedPDFs.length === 0)
                   ? "cursor-not-allowed opacity-50"
                   : "cursor-pointer hover:opacity-80"
               }`}
@@ -2307,9 +2510,10 @@ export default function Home() {
                 maxFiles={5}
                 uploading={uploadingPDFs}
                 onUploadingChange={setUploadingPDFs}
+                disabled={!authLoaded || !userId}
               />
               <SignedIn>
-                {!editorState.isOpen && <UserButton />}
+                {!editorState.isOpen && <UserButtonWithClear />}
               </SignedIn>
             </div>
           </div>

@@ -191,3 +191,4 @@ Canvas Rendering in Right Panel
 
 The browser integration is fully implemented and ready to use once the browser service is started.
 
+

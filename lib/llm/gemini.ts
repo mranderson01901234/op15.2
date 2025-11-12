@@ -280,7 +280,7 @@ export const FUNCTION_REGISTRY: FunctionDeclaration[] = [
   },
   {
     name: "brave.search",
-    description: "Search the web using Brave Search API. Use this when the user asks questions about current events, recent information, or anything that requires up-to-date web knowledge. Returns search results with titles, URLs, descriptions, and thumbnail images when available.",
+    description: "Search the web using Brave Search API. ONLY use this when the user explicitly asks about current events, recent news, or information that explicitly requires up-to-date web knowledge. DO NOT use for general knowledge questions - answer those from your training data. Returns search results with titles, URLs, descriptions, and thumbnail images when available.",
     parameters: {
       type: Type.OBJECT,
       properties: {

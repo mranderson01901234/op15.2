@@ -17,7 +17,7 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { X, Save, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { UserButton } from "@clerk/nextjs";
+import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
 import { CommandsButton } from "@/components/layout/commands-button";
 
 // Custom theme matching matte black background
@@ -272,7 +272,7 @@ export function CodeMirrorEditor() {
           <CommandsButton />
           
           {/* User Button */}
-          <UserButton />
+          <UserButtonWithClear />
           
           {/* Close Button */}
           <button

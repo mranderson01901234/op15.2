@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '50mb',
     },
   },
+  // Explicitly set the workspace root to avoid detection issues
+  turbopack: {
+    root: __dirname,
+  },
 };
 
 export default nextConfig;

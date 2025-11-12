@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { FileTree } from "@/components/filesystem/file-tree";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useChat } from "@/contexts/chat-context";
+import { useAuth } from "@clerk/nextjs";
 
 type TabType = "chats" | "filesystem";
 
@@ -18,9 +19,19 @@ export function SidebarNav() {
   const { chats, activeChatId, createChat, deleteChat, setActiveChat } = useChat();
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
+  const { userId, isLoaded: authLoaded } = useAuth();
 
   useEffect(() => {
-    // Fetch the environment root path
+    // Only fetch the environment root path if user is authenticated
+    if (!authLoaded) return;
+    
+    if (!userId) {
+      // User is signed out - clear the root path
+      setRootPath(".");
+      return;
+    }
+
+    // User is authenticated - fetch the root path
     fetch("/api/filesystem/root")
       .then((res) => res.json())
       .then((data) => {
@@ -31,7 +42,7 @@ export function SidebarNav() {
       .catch((error) => {
         console.error("Failed to load root path:", error);
       });
-  }, []);
+  }, [authLoaded, userId]);
 
   const handleFileSelect = async (path: string) => {
     setSelectedPath(path);
@@ -52,6 +63,10 @@ export function SidebarNav() {
   };
 
   const handleNewChat = () => {
+    // Don't allow creating chats if user is not authenticated
+    if (!authLoaded || !userId) {
+      return;
+    }
     createChat();
   };
 
@@ -122,9 +137,11 @@ export function SidebarNav() {
                 <SidebarMenuButton 
                   size="default" 
                   onClick={handleNewChat}
+                  disabled={!authLoaded || !userId}
                   className={cn(
                     "w-full",
-                    isCollapsed && "w-auto justify-center"
+                    isCollapsed && "w-auto justify-center",
+                    (!authLoaded || !userId) && "opacity-50 cursor-not-allowed"
                   )}
                   tooltip="New Chat"
                 >
@@ -170,7 +187,7 @@ export function SidebarNav() {
               <SidebarGroup className="mt-2 flex-shrink-0">
                 <SidebarGroupLabel>
                   Explorer
-                  {rootPath !== "." && (
+                  {authLoaded && userId && rootPath !== "." && (
                     <span className="text-xs text-muted-foreground ml-2 font-normal">
                       {rootPath}
                     </span>

@@ -11,6 +11,7 @@ interface PDFUploadIconProps {
   maxFiles?: number;
   uploading?: boolean;
   onUploadingChange?: (uploading: boolean) => void;
+  disabled?: boolean;
 }
 
 export function PDFUploadIcon({
@@ -19,6 +20,7 @@ export function PDFUploadIcon({
   maxFiles = 5,
   uploading = false,
   onUploadingChange,
+  disabled = false,
 }: PDFUploadIconProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -87,16 +89,16 @@ export function PDFUploadIcon({
   }, [existingPDFs, maxFiles, onPDFsChange, onUploadingChange]);
 
   const handleClick = useCallback(() => {
-    if (existingPDFs.length >= maxFiles) return;
+    if (disabled || existingPDFs.length >= maxFiles) return;
     fileInputRef.current?.click();
-  }, [existingPDFs.length, maxFiles]);
+  }, [disabled, existingPDFs.length, maxFiles]);
 
   return (
     <>
       <button
         type="button"
         onClick={handleClick}
-        disabled={uploading || existingPDFs.length >= maxFiles}
+        disabled={disabled || uploading || existingPDFs.length >= maxFiles}
         className="flex items-center justify-center h-6 w-6 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Attach PDF"
       >
@@ -113,7 +115,7 @@ export function PDFUploadIcon({
         accept="application/pdf"
         className="hidden"
         onChange={(e) => handleFileSelect(e.target.files)}
-        disabled={uploading || existingPDFs.length >= maxFiles}
+        disabled={disabled || uploading || existingPDFs.length >= maxFiles}
       />
     </>
   );
