@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, Fragment } from "react";
-import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play } from "lucide-react";
+import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play, ChevronDown, ChevronUp } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { PDFUploadIcon } from "@/components/chat/pdf-upload-icon";
@@ -161,6 +161,158 @@ function preventOrphanedWords(text: string): string {
   return words.slice(0, -2).join(' ') + ' ' + lastTwoWords;
 }
 
+// Table component for markdown tables
+function MarkdownTable({ 
+  headers, 
+  rows, 
+  keyId 
+}: { 
+  headers: string[]; 
+  rows: string[][]; 
+  keyId: string;
+}) {
+  return (
+    <div className="my-6 overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-border/50">
+            {headers.map((header, idx) => (
+              <th
+                key={`header-${idx}`}
+                className="px-4 py-3 text-left text-[15px] font-semibold text-foreground"
+              >
+                {formatInlineContent(header.trim())}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIdx) => (
+            <tr
+              key={`row-${rowIdx}`}
+              className="border-b border-border/40 last:border-b-0"
+            >
+              {row.map((cell, cellIdx) => (
+                <td
+                  key={`cell-${rowIdx}-${cellIdx}`}
+                  className="px-4 py-3 text-[15px] text-foreground/90"
+                >
+                  {formatInlineContent(cell.trim())}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Collapsible bullet list component
+function CollapsibleBulletList({ 
+  bullets, 
+  keyId 
+}: { 
+  bullets: string[]; 
+  keyId: string;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const isLong = bullets.length > 3;
+  const visibleBullets = isLong && !isExpanded ? bullets.slice(0, 3) : bullets;
+  const hiddenCount = bullets.length - 3;
+
+  return (
+    <div className="my-2">
+      {visibleBullets.map((bulletText, idx) => (
+        <div key={`bullet-${keyId}-${idx}`} className="flex items-start gap-2 mb-2.5 ml-2">
+          <span className="text-primary mt-1.5">•</span>
+          <span className="flex-1 leading-[1.8] text-[15px]">{formatInlineContent(bulletText)}</span>
+        </div>
+      ))}
+      {isLong && (
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mt-2 ml-2"
+        >
+          {isExpanded ? (
+            <>
+              <ChevronUp className="h-3 w-3" />
+              <span>Show less</span>
+            </>
+          ) : (
+            <>
+              <ChevronDown className="h-3 w-3" />
+              <span>Show {hiddenCount} more</span>
+            </>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Collapsible code block component for long outputs
+function CollapsibleCodeBlock({ 
+  content, 
+  language, 
+  keyId 
+}: { 
+  content: string; 
+  language?: string; 
+  keyId: string;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const lines = content.split('\n');
+  const isLong = lines.length > 20 || content.length > 1000;
+  const previewLines = 10;
+  const previewContent = isLong && !isExpanded 
+    ? lines.slice(0, previewLines).join('\n') + '\n...'
+    : content;
+
+  if (!isLong) {
+    // Render normally if not long enough
+    return (
+      <div className="my-4 rounded-lg bg-muted/50 border border-border/30 overflow-hidden">
+        {language && (
+          <div className="px-3 py-1 text-xs text-muted-foreground border-b border-border/30 bg-muted/30 font-mono">
+            {language}
+          </div>
+        )}
+        <pre className="p-4 overflow-x-auto text-sm font-mono">
+          <code>{content}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-4 rounded-lg bg-muted/50 border border-border/30 overflow-hidden">
+      {language && (
+        <div className="px-3 py-1 text-xs text-muted-foreground border-b border-border/30 bg-muted/30 font-mono">
+          {language}
+        </div>
+      )}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors border-b border-border/30"
+      >
+        <span className="font-medium">
+          {isExpanded ? 'Collapse' : 'Expand'} ({lines.length} lines)
+        </span>
+        {isExpanded ? (
+          <ChevronUp className="h-4 w-4" />
+        ) : (
+          <ChevronDown className="h-4 w-4" />
+        )}
+      </button>
+      <pre className="p-4 overflow-x-auto text-sm font-mono">
+        <code>{previewContent}</code>
+      </pre>
+    </div>
+  );
+}
+
+
 // Format message content with code blocks, headers, and better structure
 function formatMessageContent(content: string): React.ReactElement {
   const parts: React.ReactElement[] = [];
@@ -187,30 +339,155 @@ function formatMessageContent(content: string): React.ReactElement {
   segments.forEach((segment, segIdx) => {
     if (segment.type === 'code') {
       parts.push(
-        <div key={`code-${key++}`} className="my-4 rounded-lg bg-muted/50 border border-border/30 overflow-hidden">
-          {segment.language && (
-            <div className="px-3 py-1 text-xs text-muted-foreground border-b border-border/30 bg-muted/30 font-mono">
-              {segment.language}
-            </div>
-          )}
-          <pre className="p-4 overflow-x-auto text-sm font-mono">
-            <code>{segment.content}</code>
-          </pre>
-        </div>
+        <CollapsibleCodeBlock 
+          key={`code-${key++}`}
+          content={segment.content}
+          language={segment.language}
+          keyId={`code-${key-1}`}
+        />
       );
     } else {
-      // Process text content - split into paragraphs and format
-      const lines = segment.content.split('\n');
+      // Process text content - normalize multiple consecutive newlines to max 2 (one paragraph break)
+      // This prevents huge gaps from multiple consecutive empty lines
+      const normalizedContent = segment.content.replace(/\n{3,}/g, '\n\n');
+      
+      // Parse tables first - extract tables and replace with placeholders
+      // Markdown table format: | Header | Header |\n|-------|-------|\n| Cell | Cell |
+      const tableRegex = /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/g;
+      const tables: Array<{ headers: string[]; rows: string[][]; placeholder: string; start: number; end: number }> = [];
+      let tableIndex = 0;
+      const tableMatches: Array<{ text: string; start: number; end: number }> = [];
+      
+      // Collect all table matches first
+      let tableMatch;
+      while ((tableMatch = tableRegex.exec(normalizedContent)) !== null) {
+        tableMatches.push({
+          text: tableMatch[1],
+          start: tableMatch.index,
+          end: tableMatch.index + tableMatch[1].length
+        });
+      }
+      
+      // Process tables in reverse order to preserve indices when replacing
+      for (let i = tableMatches.length - 1; i >= 0; i--) {
+        const match = tableMatches[i];
+        const tableText = match.text;
+        const tableLines = tableText.split('\n').filter(l => l.trim() && l.includes('|'));
+        
+        if (tableLines.length >= 2) {
+          // First line is headers
+          const headerLine = tableLines[0];
+          // Split by | and filter out empty strings (from leading/trailing |)
+          const headerCells = headerLine.split('|').map(h => h.trim()).filter(h => h);
+          
+          // Skip separator line (second line) - it's just dashes and pipes
+          // Remaining lines are data rows
+          const rows: string[][] = [];
+          for (let j = 2; j < tableLines.length; j++) {
+            const rowLine = tableLines[j];
+            const rowCells = rowLine.split('|').map(c => c.trim()).filter((_, idx, arr) => {
+              // Filter out empty strings but keep cells (skip leading/trailing empty from |)
+              return idx > 0 && idx < arr.length - 1;
+            });
+            // Ensure row has same number of cells as headers
+            if (rowCells.length === headerCells.length) {
+              rows.push(rowCells);
+            } else if (rowCells.length > 0) {
+              // Pad or trim to match header count
+              const adjustedRow = rowCells.slice(0, headerCells.length);
+              while (adjustedRow.length < headerCells.length) {
+                adjustedRow.push('');
+              }
+              rows.push(adjustedRow);
+            }
+          }
+          
+          if (headerCells.length > 0 && rows.length > 0) {
+            const placeholder = `__TABLE_PLACEHOLDER_${tableIndex}__`;
+            tables.push({ 
+              headers: headerCells, 
+              rows, 
+              placeholder,
+              start: match.start,
+              end: match.end
+            });
+            tableIndex++;
+          }
+        }
+      }
+      
+      // Replace tables with placeholders (in reverse order to preserve indices)
+      let processedContent = normalizedContent;
+      for (let i = tables.length - 1; i >= 0; i--) {
+        const table = tables[i];
+        const before = processedContent.substring(0, table.start);
+        const after = processedContent.substring(table.end);
+        processedContent = before + `\n${table.placeholder}\n` + after;
+      }
+
+      const lines = processedContent.split('\n');
       const textParts: React.ReactElement[] = [];
       let currentParagraph: string[] = [];
+      let currentBulletGroup: string[] = [];
       let lastNumberedSectionIndex = -1;
       let contentAfterLastNumberedSection = '';
 
+      // Helper function to flush bullet group
+      const flushBulletGroup = () => {
+        if (currentBulletGroup.length > 0) {
+          textParts.push(
+            <CollapsibleBulletList 
+              key={`bullet-group-${key++}`}
+              bullets={currentBulletGroup}
+              keyId={`bullet-group-${key-1}`}
+            />
+          );
+          // Track content after numbered sections
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += currentBulletGroup.join(' ') + ' ';
+          }
+          currentBulletGroup = [];
+        }
+      };
+
       lines.forEach((line, idx) => {
+        // Check if this line is a table placeholder
+        const tablePlaceholderMatch = line.match(/^__TABLE_PLACEHOLDER_(\d+)__$/);
+        if (tablePlaceholderMatch) {
+          flushBulletGroup();
+          // Flush any current paragraph before table
+          if (currentParagraph.length > 0) {
+            const paragraphText = currentParagraph.join(' ');
+            textParts.push(
+              <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
+                {formatInlineContent(paragraphText)}
+              </p>
+            );
+            if (lastNumberedSectionIndex >= 0) {
+              contentAfterLastNumberedSection += paragraphText + ' ';
+            }
+            currentParagraph = [];
+          }
+          
+          const tableIdx = parseInt(tablePlaceholderMatch[1]);
+          const table = tables[tableIdx];
+          if (table) {
+            textParts.push(
+              <MarkdownTable
+                key={`table-${key++}`}
+                headers={table.headers}
+                rows={table.rows}
+                keyId={`table-${key-1}`}
+              />
+            );
+          }
+          return;
+        }
         const trimmedLine = line.trim();
 
         // Headers (## or ###)
         if (trimmedLine.startsWith('###')) {
+          flushBulletGroup();
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -225,7 +502,7 @@ function formatMessageContent(content: string): React.ReactElement {
             currentParagraph = [];
           }
           textParts.push(
-            <h3 key={`h3-${key++}`} className="text-base font-semibold text-foreground mt-6 mb-3">
+            <h3 key={`h3-${key++}`} className="text-lg font-semibold text-foreground mt-6 mb-3">
               {trimmedLine.replace(/^###\s*/, '')}
             </h3>
           );
@@ -234,6 +511,7 @@ function formatMessageContent(content: string): React.ReactElement {
             contentAfterLastNumberedSection += trimmedLine + ' ';
           }
         } else if (trimmedLine.startsWith('##')) {
+          flushBulletGroup();
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -249,7 +527,7 @@ function formatMessageContent(content: string): React.ReactElement {
           }
           textParts.push(
             <Fragment key={`h2-section-${key++}`}>
-              <h2 className="text-lg font-bold text-foreground mt-6 mb-3">
+              <h2 className="text-xl font-bold text-foreground mt-6 mb-3">
                 {trimmedLine.replace(/^##\s*/, '')}
               </h2>
               <div className="h-px bg-gradient-to-r from-border/60 via-border/30 to-transparent mb-3"></div>
@@ -262,6 +540,7 @@ function formatMessageContent(content: string): React.ReactElement {
         }
         // Introductory lines ending with colon (e.g., "This includes things like:")
         else if (trimmedLine.endsWith(':') && trimmedLine.length > 10 && trimmedLine.length < 100) {
+          flushBulletGroup();
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -287,6 +566,7 @@ function formatMessageContent(content: string): React.ReactElement {
         }
         // Numbered lists (1., 2., 3., etc. - handles both plain and bold formatted numbers)
         else if (/^\d+\.\s/.test(trimmedLine)) {
+          flushBulletGroup();
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -325,6 +605,7 @@ function formatMessageContent(content: string): React.ReactElement {
         }
         // Bullet points
         else if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
+          // Flush paragraph before starting bullets
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -338,20 +619,13 @@ function formatMessageContent(content: string): React.ReactElement {
             }
             currentParagraph = [];
           }
+          // Add to bullet group instead of rendering immediately
           const bulletText = trimmedLine.replace(/^[-*]\s*/, '');
-          textParts.push(
-            <div key={`li-${key++}`} className="flex items-start gap-2 mb-2.5 ml-2">
-              <span className="text-primary mt-1.5">•</span>
-              <span className="flex-1 leading-[1.8] text-[15px]">{formatInlineContent(bulletText)}</span>
-            </div>
-          );
-          // Track content after numbered sections
-          if (lastNumberedSectionIndex >= 0) {
-            contentAfterLastNumberedSection += bulletText + ' ';
-          }
+          currentBulletGroup.push(bulletText);
         }
         // Empty line - paragraph break
         else if (trimmedLine === '') {
+          flushBulletGroup();
           if (currentParagraph.length > 0) {
             const paragraphText = currentParagraph.join(' ');
             textParts.push(
@@ -365,12 +639,17 @@ function formatMessageContent(content: string): React.ReactElement {
             }
             currentParagraph = [];
           }
+          // Skip multiple consecutive empty lines (already normalized to max 2)
         }
         // Regular text
         else {
+          flushBulletGroup();
           currentParagraph.push(line);
         }
       });
+
+      // Flush any remaining bullet group at the end
+      flushBulletGroup();
 
       // Add remaining paragraph
       if (currentParagraph.length > 0) {
@@ -911,6 +1190,7 @@ export default function Home() {
   const prevIsProcessingRef = useRef(false);
   const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const scrollAnimationFrameRef = useRef<number | null>(null);
   const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser } = useWorkspace();
   const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
   const { setInsertTextHandler, setSendMessageHandler } = useChatInput();
@@ -1399,48 +1679,83 @@ export default function Home() {
   // The response will continue streaming below the input box without auto-scrolling
   useEffect(() => {
     if ((isLoading || isProcessing) && shouldAutoScrollDownRef.current && messagesContainerRef.current && messagesEndRef.current && lastUserMessageRef.current) {
-      // Use requestAnimationFrame for smoother scrolling
-      requestAnimationFrame(() => {
-        const container = messagesContainerRef.current;
-        const messageElement = lastUserMessageRef.current;
-        const endElement = messagesEndRef.current;
-        
-        if (!container || !messageElement || !endElement) return;
-        
-        // Check if this is a longer response by checking:
-        // 1. Content length of the last assistant message (if exists)
-        // 2. Scroll position - if we've scrolled significantly, it's likely a longer response
-        const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
-        const isLongResponse = lastAssistantMessage 
-          ? (lastAssistantMessage.content?.length || 0) > 500 // Consider >500 chars as "long"
-          : container.scrollHeight > container.clientHeight * 1.5; // Or if content is 1.5x viewport height
-        
-        // Check position of user's last message relative to container top
-        const containerRect = container.getBoundingClientRect();
-        const messageRect = messageElement.getBoundingClientRect();
-        const messageTopFromContainer = messageRect.top - containerRect.top;
-        
-        // Target position: stop scrolling sooner to keep user message further from header
-        const targetTop = 150;
-        const tolerance = 30; // Allow some tolerance
-        
-        // For longer responses: stop scrolling when user message is about to reach the header
-        // This allows the response to continue streaming below the input box without auto-scrolling
-        if (isLongResponse && messageTopFromContainer < targetTop + tolerance) {
-          // User message is at or near the header position, stop scrolling
-          // The response will continue streaming below the input box
-          return;
+      const container = messagesContainerRef.current;
+      const messageElement = lastUserMessageRef.current;
+      const endElement = messagesEndRef.current;
+      
+      if (!container || !messageElement || !endElement) return;
+      
+      // Check if this is a longer response by checking:
+      // 1. Content length of the last assistant message (if exists)
+      // 2. Scroll position - if we've scrolled significantly, it's likely a longer response
+      const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
+      const isLongResponse = lastAssistantMessage 
+        ? (lastAssistantMessage.content?.length || 0) > 500 // Consider >500 chars as "long"
+        : container.scrollHeight > container.clientHeight * 1.5; // Or if content is 1.5x viewport height
+      
+      // Check position of user's last message relative to container top
+      const containerRect = container.getBoundingClientRect();
+      const messageRect = messageElement.getBoundingClientRect();
+      const messageTopFromContainer = messageRect.top - containerRect.top;
+      
+      // Target position: stop scrolling sooner to keep user message further from header
+      const targetTop = 150;
+      const tolerance = 30; // Allow some tolerance
+      
+      // For longer responses: stop scrolling when user message is about to reach the header
+      // This allows the response to continue streaming below the input box without auto-scrolling
+      if (isLongResponse && messageTopFromContainer < targetTop + tolerance) {
+        // User message is at or near the header position, stop scrolling
+        // The response will continue streaming below the input box
+        return;
+      }
+      
+      // For shorter responses or when user message is below header position:
+      // Continue auto-scrolling to follow the streaming response
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom > 50) {
+        // Cancel any existing animation
+        if (scrollAnimationFrameRef.current !== null) {
+          cancelAnimationFrame(scrollAnimationFrameRef.current);
         }
         
-        // For shorter responses or when user message is below header position:
-        // Continue auto-scrolling to follow the streaming response
-        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-        if (distanceFromBottom > 50) {
-          // Scroll down to follow the streaming response
-          endElement.scrollIntoView({ behavior: "smooth", block: "end" });
-        }
-      });
+        // Smooth scroll with consistent easing factor for gradual, continuous movement
+        // The target recalculates each frame to follow content growth during streaming
+        const easingFactor = 0.06; // Reduced from 0.08 for even smoother, more gradual movement
+        const animate = () => {
+          // Recalculate target each frame since content grows during streaming
+          const currentScrollTop = container.scrollTop;
+          const targetScrollTop = container.scrollHeight - container.clientHeight;
+          const distance = targetScrollTop - currentScrollTop;
+          
+          // Stop if we're close enough (threshold reduced to 0.05px for ultra-smooth final positioning)
+          if (Math.abs(distance) < 0.05) {
+            container.scrollTop = targetScrollTop;
+            scrollAnimationFrameRef.current = null;
+            return;
+          }
+          
+          // Apply easing: move a small fraction of the remaining distance each frame
+          // This creates smooth, incremental movement that follows content growth seamlessly
+          const scrollDelta = distance * easingFactor;
+          container.scrollTop = currentScrollTop + scrollDelta;
+          
+          // Continue animation at 60fps via requestAnimationFrame
+          scrollAnimationFrameRef.current = requestAnimationFrame(animate);
+        };
+        
+        // Start animation
+        scrollAnimationFrameRef.current = requestAnimationFrame(animate);
+      }
     }
+    
+    // Cleanup: cancel animation when effect dependencies change or component unmounts
+    return () => {
+      if (scrollAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(scrollAnimationFrameRef.current);
+        scrollAnimationFrameRef.current = null;
+      }
+    };
   }, [messages, isLoading, isProcessing]);
 
   // Ensure there's an active chat when component mounts
@@ -2143,6 +2458,13 @@ export default function Home() {
               // Find the last user message to attach ref (check if this is the last user message)
               const lastUserMessageIndex = messages.map((m, idx) => m.role === "user" ? idx : -1).filter(idx => idx !== -1).pop();
               const isLastUserMessage = message.role === "user" && lastUserMessageIndex !== undefined && index === lastUserMessageIndex;
+              
+              // Check if this is the currently streaming assistant message
+              const isLastAssistantMessage = message.role === "assistant" && index === messages.length - 1;
+              const isStreaming = isLastAssistantMessage && (isLoading || isProcessing) && message.content && message.content.length > 0;
+              
+              // Check if message contains a table (markdown table pattern)
+              const hasTable = message.content && /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/.test(message.content);
 
               return (
               <div
@@ -2154,21 +2476,21 @@ export default function Home() {
               >
                 <div
                   className={`${
-                    message.role === "user" ? "" : "max-w-[92%]"
+                    message.role === "user" ? "" : hasTable ? "max-w-full" : "max-w-[92%]"
                   } group relative ${
                     message.role === "assistant"
-                      ? "pr-3 py-3 rounded-r-sm hover:bg-muted/20"
+                      ? "pr-3 py-3 rounded-r-sm"
                       : ""
                   }`}
                   style={message.role === "assistant" ? {
                     animation: 'fadeInAssistant 0.8s ease-out forwards',
                     willChange: 'opacity',
-                    maxWidth: 'min(92%, 70ch)', // Optimal reading width is ~70 characters
+                    maxWidth: hasTable ? '100%' : 'min(92%, 70ch)', // Full width for tables, optimal reading width otherwise
                   } : {
                     animation: 'fadeIn 0.3s ease-in-out',
                     animationFillMode: 'backwards',
                     animationDelay: `${index * 0.05}s`,
-                    maxWidth: 'min(75%, 65ch)', // Slightly wider to prevent orphaned words
+                    maxWidth: 'min(92.625%, 80.275ch)', // Extended width for better readability
                   }}
                 >
                   {/* Formatted Search Response */}
@@ -2259,7 +2581,7 @@ export default function Home() {
                         data-message-id={message.id}
                         className={`break-words ${
                           message.role === "user"
-                            ? "text-base font-medium text-yellow-100 text-left w-full"
+                            ? "text-lg font-medium text-yellow-100 text-left w-full"
                             : `text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`
                         }`}
                         style={{
@@ -2294,8 +2616,8 @@ export default function Home() {
                                 .trim()
                         )}
                       </div>
-                      {/* Timestamp - only for assistant */}
-                      {message.role === "assistant" && (
+                      {/* Timestamp - only for assistant, hide while streaming */}
+                      {message.role === "assistant" && !isStreaming && (
                         <div className="flex items-center justify-between gap-3 mt-3">
                           <div className="text-xs text-muted-foreground/60">
                             {formatTimestamp(message.timestamp)}
@@ -2364,8 +2686,8 @@ export default function Home() {
                       )}
                     </div>
                   )}
-                  {/* Timestamp and actions for formatted search */}
-                  {message.formattedSearch && (
+                  {/* Timestamp and actions for formatted search, hide while streaming */}
+                  {message.formattedSearch && !isStreaming && (
                     <div className="flex items-center justify-between gap-3 mt-4">
                       <div className="text-xs text-muted-foreground/60">
                         {formatTimestamp(message.timestamp)}
@@ -2417,8 +2739,14 @@ export default function Home() {
               </div>
               );
             })}
-            {/* Processing Indicator */}
-            {isProcessing && (
+            {/* Processing Indicator - hide once response starts streaming */}
+            {isProcessing && (() => {
+              // Find the last assistant message to check if it has content
+              const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
+              const hasStartedStreaming = lastAssistantMessage && lastAssistantMessage.content && lastAssistantMessage.content.length > 0;
+              // Only show if processing but no content has started streaming yet
+              return !hasStartedStreaming;
+            })() && (
               <div className="flex justify-start mb-6">
                 <div className="max-w-[85%]">
                   <ProcessingIndicator />
