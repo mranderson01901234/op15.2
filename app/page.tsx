@@ -353,19 +353,41 @@ function formatMessageContent(content: string): React.ReactElement {
       
       // Parse tables first - extract tables and replace with placeholders
       // Markdown table format: | Header | Header |\n|-------|-------|\n| Cell | Cell |
-      const tableRegex = /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/g;
+      // More flexible regex to handle variations in spacing and formatting
+      // Pattern 1: Standard markdown table with separator row
+      const tableRegex1 = /(\|[^\n]+\|\s*\n\s*\|[\s\-:|]+\|\s*\n(?:\s*\|[^\n]+\|\s*\n?)+)/g;
+      // Pattern 2: More permissive - allows for tables without strict separator format
+      const tableRegex2 = /((?:\|[^\n]+\|\s*\n){2,})/g;
+      
       const tables: Array<{ headers: string[]; rows: string[][]; placeholder: string; start: number; end: number }> = [];
       let tableIndex = 0;
       const tableMatches: Array<{ text: string; start: number; end: number }> = [];
       
-      // Collect all table matches first
+      // Collect all table matches first using primary regex
       let tableMatch;
-      while ((tableMatch = tableRegex.exec(normalizedContent)) !== null) {
+      while ((tableMatch = tableRegex1.exec(normalizedContent)) !== null) {
         tableMatches.push({
           text: tableMatch[1],
           start: tableMatch.index,
           end: tableMatch.index + tableMatch[1].length
         });
+      }
+      
+      // Fallback: try alternative regex if no matches found
+      if (tableMatches.length === 0) {
+        tableRegex2.lastIndex = 0; // Reset regex
+        while ((tableMatch = tableRegex2.exec(normalizedContent)) !== null) {
+          const potentialTable = tableMatch[1];
+          const lines = potentialTable.split('\n').filter(l => l.trim() && l.includes('|'));
+          // Only consider it a table if it has at least 2 rows with pipes
+          if (lines.length >= 2) {
+            tableMatches.push({
+              text: potentialTable,
+              start: tableMatch.index,
+              end: tableMatch.index + potentialTable.length
+            });
+          }
+        }
       }
       
       // Process tables in reverse order to preserve indices when replacing
@@ -380,14 +402,23 @@ function formatMessageContent(content: string): React.ReactElement {
           // Split by | and filter out empty strings (from leading/trailing |)
           const headerCells = headerLine.split('|').map(h => h.trim()).filter(h => h);
           
-          // Skip separator line (second line) - it's just dashes and pipes
-          // Remaining lines are data rows
+          // Check if second line is a separator (contains only dashes, pipes, colons, spaces)
+          const secondLine = tableLines[1];
+          const isSeparatorLine = /^[\s|\-:]+$/.test(secondLine.trim());
+          
+          // Skip separator line if present, otherwise treat all lines as data rows
+          const startRowIndex = isSeparatorLine ? 2 : 1;
           const rows: string[][] = [];
-          for (let j = 2; j < tableLines.length; j++) {
+          for (let j = startRowIndex; j < tableLines.length; j++) {
             const rowLine = tableLines[j];
-            const rowCells = rowLine.split('|').map(c => c.trim()).filter((_, idx, arr) => {
-              // Filter out empty strings but keep cells (skip leading/trailing empty from |)
-              return idx > 0 && idx < arr.length - 1;
+            // Split by |, trim each cell, and filter out empty leading/trailing cells
+            const splitCells = rowLine.split('|').map(c => c.trim());
+            // Remove leading and trailing empty strings from split (caused by | at start/end)
+            const rowCells = splitCells.filter((cell, idx) => {
+              // Keep cells that are not empty, or if empty, only keep middle ones
+              if (cell) return true;
+              // For empty cells, skip first and last (they're from leading/trailing |)
+              return idx > 0 && idx < splitCells.length - 1;
             });
             // Ensure row has same number of cells as headers
             if (rowCells.length === headerCells.length) {
