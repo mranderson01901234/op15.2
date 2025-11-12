@@ -112,20 +112,50 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
     return null;
   }
 
+  // Check if error is Vercel-related
+  const isVercelError = error?.toLowerCase().includes('vercel') || error?.toLowerCase().includes('serverless');
+
   return (
-    <button
-      onClick={isConnected ? handleDisconnect : handleConnect}
-      disabled={isConnecting}
-      className="px-3 py-1.5 flex items-center gap-2 rounded-full bg-transparent hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-      <div className={cn(
-        "h-1.5 w-1.5 rounded-full shrink-0",
-        isConnected ? "bg-green-500" : "bg-muted-foreground"
-      )} />
-      <span className="text-xs text-muted-foreground">
-        {isConnecting ? "Connecting..." : isConnected ? "Connected" : "Disconnected"}
-      </span>
-    </button>
+    <div className="flex flex-col gap-1">
+      <button
+        onClick={isConnected ? handleDisconnect : handleConnect}
+        disabled={isConnecting || !isBrowserCompatible}
+        className="px-3 py-1.5 flex items-center gap-2 rounded-full bg-transparent hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <div className={cn(
+          "h-1.5 w-1.5 rounded-full shrink-0",
+          isConnected ? "bg-green-500" : "bg-muted-foreground"
+        )} />
+        <span className="text-xs text-muted-foreground">
+          {isConnecting ? "Connecting..." : isConnected ? "Connected" : "Disconnected"}
+        </span>
+      </button>
+      {error && (
+        <div className={cn(
+          "text-xs px-3 py-1.5 rounded-md",
+          isVercelError 
+            ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20"
+            : "bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+        )}>
+          {isVercelError ? (
+            <div className="space-y-1">
+              <div className="font-medium">WebSocket not available on Vercel</div>
+              <div className="text-xs opacity-90">
+                The local environment bridge requires a persistent WebSocket connection, which is not supported on Vercel serverless functions. 
+                This feature works on custom server deployments.
+              </div>
+            </div>
+          ) : (
+            <div>{error}</div>
+          )}
+        </div>
+      )}
+      {!isBrowserCompatible && !error && (
+        <div className="text-xs px-3 py-1.5 rounded-md bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border border-yellow-500/20">
+          {compatibilityMessage || 'File System Access API is not supported in this browser'}
+        </div>
+      )}
+    </div>
   );
 }
 

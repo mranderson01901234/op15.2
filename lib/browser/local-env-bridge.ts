@@ -100,9 +100,28 @@ export class LocalEnvBridge {
   }
 
   /**
+   * Check if server URL is on Vercel (which doesn't support WebSocket)
+   */
+  private isVercelDeployment(): boolean {
+    try {
+      const url = new URL(this.serverUrl);
+      return url.hostname.includes('vercel.app') || url.hostname.includes('vercel.com');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Connect WebSocket with automatic reconnection
    */
   private async connectWebSocket(): Promise<void> {
+    // Check if we're on Vercel (which doesn't support WebSocket)
+    if (this.isVercelDeployment()) {
+      const error = new Error('WebSocket connections are not supported on Vercel. The local environment bridge requires a persistent WebSocket connection, which is not available on Vercel serverless functions. Please use a custom server deployment or a third-party WebSocket service.');
+      (error as any).isVercelError = true;
+      throw error;
+    }
+
     const wsUrl = this.serverUrl.replace('http://', 'ws://').replace('https://', 'wss://');
     const fullWsUrl = `${wsUrl}/api/bridge?userId=${this.userId}`;
     
@@ -119,7 +138,12 @@ export class LocalEnvBridge {
       const timeout = setTimeout(() => {
         if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
           this.ws.close();
-          reject(new Error(`WebSocket connection timeout after 10 seconds. URL: ${fullWsUrl}`));
+          // Check if this might be a Vercel deployment issue
+          const isVercel = this.isVercelDeployment();
+          const errorMessage = isVercel
+            ? 'WebSocket connection failed. Vercel serverless functions do not support WebSocket connections. Please use a custom server deployment.'
+            : `WebSocket connection timeout after 10 seconds. URL: ${fullWsUrl}`;
+          reject(new Error(errorMessage));
         }
       }, 10000);
 
@@ -172,16 +196,23 @@ export class LocalEnvBridge {
       };
 
       this.ws.onerror = (error) => {
-        console.error('❌ Bridge WebSocket error:', {
-          error,
-          url: fullWsUrl,
-          readyState: this.ws?.readyState,
-          userId: this.userId,
-        });
+        // Don't log errors for Vercel deployments - they're expected
+        const isVercel = this.isVercelDeployment();
+        if (!isVercel) {
+          console.error('❌ Bridge WebSocket error:', {
+            error,
+            url: fullWsUrl,
+            readyState: this.ws?.readyState,
+            userId: this.userId,
+          });
+        }
         this.isConnected = false;
         if (timeout) {
           clearTimeout(timeout);
-          reject(new Error(`WebSocket connection failed: ${error}`));
+          const errorMessage = isVercel
+            ? 'WebSocket connections are not supported on Vercel serverless functions. Please use a custom server deployment.'
+            : `WebSocket connection failed: ${error}`;
+          reject(new Error(errorMessage));
         }
       };
 
@@ -194,16 +225,25 @@ export class LocalEnvBridge {
           this.pingInterval = null;
         }
         
-        console.log('Local environment bridge disconnected', { 
-          code: event.code, 
-          reason: event.reason,
-          wasClean: event.wasClean,
-          url: fullWsUrl,
-          reconnectAttempts: this.reconnectAttempts,
-        });
+        const isVercel = this.isVercelDeployment();
+        // Only log disconnection if not Vercel (expected failures)
+        if (!isVercel) {
+          console.log('Local environment bridge disconnected', { 
+            code: event.code, 
+            reason: event.reason,
+            wasClean: event.wasClean,
+            url: fullWsUrl,
+            reconnectAttempts: this.reconnectAttempts,
+          });
+        }
+        
+        // Don't attempt reconnection on Vercel or if it was a clean close
+        if (isVercel || event.code === 1000) {
+          return;
+        }
         
         // Attempt reconnection if not a clean close and we haven't exceeded max attempts
-        if (event.code !== 1000 && this.dirHandle && this.reconnectAttempts < this.maxReconnectAttempts) {
+        if (this.dirHandle && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           const delay = Math.min(3000 * this.reconnectAttempts, 30000); // Exponential backoff, max 30s
           console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);

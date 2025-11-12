@@ -3,7 +3,7 @@
  * Handles File System Access API bridge connections
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getBridgeManager } from '@/lib/infrastructure/bridge-manager';
 import { auth } from '@clerk/nextjs/server';
 import { logger } from '@/lib/utils/logger';
@@ -22,6 +22,18 @@ export async function GET(req: NextRequest) {
 
     if (requestUserId !== userId) {
       return new Response('User ID mismatch', { status: 403 });
+    }
+
+    // Check if we're on Vercel (serverless functions don't support WebSocket upgrades)
+    const isVercel = !!process.env.VERCEL;
+    
+    if (isVercel) {
+      logger.info('Bridge connection request on Vercel (WebSocket not supported)', { userId });
+      return NextResponse.json({
+        error: 'WebSocket connections are not supported on Vercel serverless functions',
+        message: 'The local environment bridge requires a persistent WebSocket connection, which is not available on Vercel. Please use a custom server deployment or a third-party WebSocket service.',
+        supported: false,
+      }, { status: 503 });
     }
 
     // Upgrade to WebSocket
