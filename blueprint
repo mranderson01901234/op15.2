@@ -1,0 +1,234 @@
+You are building a production-ready LLM assistant foundation. Clean architecture with abstractions, but skip auth/DB for now.
+
+GOAL
+- Production-ready Next.js app structure
+- Clean abstractions (interfaces) for easy scaling later
+- Four core tools with proper separation of concerns:
+  1) fs.list  → list files/dirs
+  2) fs.move  → move/rename files or directories
+  3) exec.run → run a shell command and stream output
+  4) index.scan → build a fast in-memory index of paths for fuzzy lookup
+
+TECH BASELINE
+- Node 20+, TypeScript (strict mode), pnpm
+- Next.js 16+ App Router (frontend + API routes)
+- Production-ready patterns: error handling, logging, type safety
+- Abstractions: interfaces for filesystem, index, tools (swap implementations later)
+- User context structure (hardcoded userId for now, easy to add auth later)
+- No DB implementation (use in-memory + JSON file, but abstracted)
+- No auth implementation (hardcode userId, but structure ready for Clerk/Auth0)
+- Gemini-2.5-Flash function calling wired to these four tools only.
+
+DELIVERABLES
+- Working server with four tool handlers
+- Minimal chat endpoint that accepts: {message, conversationId} and returns streaming text + tool results
+- One page UI that sends a prompt and renders streamed output
+- Basic tests for each tool
+
+FILE MAP (production-ready structure)
+- /app/
+  - layout.tsx                # Root layout with sidebar
+  - page.tsx                  # Main chat UI
+  - globals.css               # Matte grey/black theme
+  - api/
+    - chat/
+      - route.ts              # POST /api/chat - streaming endpoint with error handling
+- /lib/
+  - types/
+    - user-context.ts         # UserContext type (userId, workspaceId, etc.)
+    - tool-types.ts           # Tool call/response types
+  - storage/
+    - interface.ts            # FileSystem interface (abstract)
+    - local-fs.ts             # LocalFileSystem implementation (current)
+    - virtual-fs.ts           # VirtualFileSystem stub (for S3 later)
+  - index/
+    - interface.ts            # Index interface (abstract)
+    - memory-index.ts         # MemoryIndex implementation (current)
+    - database-index.ts       # DatabaseIndex stub (for PostgreSQL later)
+  - tools/
+    - interface.ts            # ToolExecutor interface (abstract)
+    - executor.ts             # SimpleToolExecutor (current)
+    - sandboxed-executor.ts   # SandboxedToolExecutor stub (for Docker later)
+    - fs.ts                   # fs.list, fs.move implementations
+    - exec.ts                 # exec.run implementation
+    - index.ts                # index.scan implementation
+  - llm/
+    - gemini.ts               # Gemini client + function registry + streaming
+    - types.ts                # LLM message/stream types
+  - utils/
+    - logger.ts               # Structured logging
+    - errors.ts               # Custom error types
+    - env.ts                  # Environment variable validation
+- /components/
+  - ui/                       # shadcn/ui components
+  - layout/
+    - app-sidebar.tsx         # Matte grey sidebar
+  - chat/
+    - chat-interface.tsx      # Streaming chat UI
+- /scripts/
+  - dev.sh                    # pnpm dev
+- /tests/
+  - tools.test.ts             # unit tests for the four tools
+  - integration/
+    - chat.test.ts            # API route tests
+- /index.json                 # on-disk cached index (generated)
+- .env.example                # Environment variables template
+- tsconfig.json               # TypeScript strict config
+
+GEMINI FUNCTION REGISTRY (strict JSON)
+[
+  {
+    "name": "fs.list",
+    "description": "List files and folders at a path. Returns names, types, sizes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative path" },
+        "depth": { "type": "integer", "description": "0=current dir only", "default": 0 }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "fs.move",
+    "description": "Move or rename a file or directory.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "source": { "type": "string" },
+        "destination": { "type": "string" },
+        "createDestDirs": { "type": "boolean", "default": true }
+      },
+      "required": ["source", "destination"]
+    }
+  },
+  {
+    "name": "exec.run",
+    "description": "Execute a shell command in cwd and stream stdout/stderr.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "e.g., 'ls -la' or 'git status'" },
+        "cwd": { "type": "string", "description": "Working directory", "default": "." },
+        "timeoutMs": { "type": "integer", "default": 60000 }
+      },
+      "required": ["command"]
+    }
+  },
+  {
+    "name": "index.scan",
+    "description": "Walk the filesystem from a root and cache a path index for fuzzy finds.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "root": { "type": "string" },
+        "maxDepth": { "type": "integer", "default": 4 },
+        "followSymlinks": { "type": "boolean", "default": false }
+      },
+      "required": ["root"]
+    }
+  }
+]
+
+ARCHITECTURE PATTERNS
+
+Abstractions (interfaces):
+- FileSystem interface → LocalFileSystem (now), VirtualFileSystem (later)
+- Index interface → MemoryIndex (now), DatabaseIndex (later)
+- ToolExecutor interface → SimpleToolExecutor (now), SandboxedToolExecutor (later)
+
+User Context:
+- Every API route receives UserContext: { userId: string, workspaceId?: string }
+- For now: Hardcode userId = "local" (easy to swap with auth token later)
+- Structure ready for multi-tenant isolation
+
+Error Handling:
+- Custom error types (ToolError, ValidationError, etc.)
+- Structured logging (lib/utils/logger.ts)
+- Graceful error responses in API routes
+
+Type Safety:
+- Strict TypeScript config
+- All tool calls/responses typed
+- User context typed throughout
+
+IMPLEMENTATION NOTES
+- fs.list: Use FileSystem interface → LocalFileSystem.resolve + readdir, return [{name, path, kind, size, mtime}]
+- fs.move: Use FileSystem interface → LocalFileSystem.resolve + mkdir + rename
+- exec.run: Use ToolExecutor interface → SimpleToolExecutor.spawn, stream chunks, return exitCode
+- index.scan: Use Index interface → MemoryIndex.scan (walk root → memory + /index.json), expose findClosestPath(query)
+
+CHAT API ROUTE (/app/api/chat/route.ts)
+- Input: POST { message: string, conversationId?: string }
+- Flow: 
+  1) Extract user context (hardcode userId = "local" for now)
+  2) Validate input (zod schema)
+  3) Send system primer: "Use only fs.list, fs.move, exec.run, index.scan. If path unclear, call index.scan then try again."
+  4) Pass tool registry to Gemini
+  5) Stream text deltas and tool events via ReadableStream
+  6) Handle errors gracefully (try/catch, structured errors)
+  7) Return NextResponse with text/event-stream headers
+- Stateless: No memory beyond current request
+- Use ReadableStream with TextEncoder for SSE format: "data: {json}\n\n"
+- Log all requests/responses (structured logging)
+
+FALLBACKS
+- If user asks to move without a preselected directory:
+  - Attempt index.findClosestPath on both source and destination fragments
+  - If still unknown, respond with the nearest candidates and ask which one
+
+UI (Next.js App Router)
+- /app/page.tsx: Main chat interface with streaming
+- Matte grey sidebar, matte black background (Vercel-style)
+- Wire to /api/chat via fetch + ReadableStream
+- Stream parsing: response.body.getReader() + TextDecoder for SSE
+
+TESTS (minimal)
+- fs.list on repo root returns at least one entry
+- fs.move creates dest dirs when missing and succeeds
+- exec.run returns exitCode=0 for “echo hello”
+- index.scan creates /index.json and exposes at least 50 entries on a medium repo
+
+ACCEPTANCE
+- Start server: ./scripts/dev.sh
+- From UI:
+  - “Index my home directory at ~/” → tool: index.scan
+  - “List ~/Downloads” → tool: fs.list
+  - “Move foo.txt to ~/Documents/archive/foo.txt” → tool: fs.move
+  - “Run ‘uname -a’” → tool: exec.run
+- All four commands work end-to-end with streamed output.
+
+IMPLEMENTATION ORDER
+
+Phase 1: Foundation
+1) Initialize Next.js with TypeScript strict mode
+2) Set up folder structure with abstractions
+3) Create interfaces (FileSystem, Index, ToolExecutor)
+4) Set up environment variables (.env.example)
+5) Add logging utility
+6) Add error types
+
+Phase 2: Core Implementation
+7) Implement LocalFileSystem (fs.list, fs.move)
+8) Implement MemoryIndex (index.scan)
+9) Implement SimpleToolExecutor (exec.run)
+10) Wire Gemini client with function registry
+11) Build streaming chat API route
+
+Phase 3: UI
+12) Set up shadcn/ui components
+13) Build matte grey sidebar
+14) Build streaming chat interface
+15) Wire UI to API
+
+Phase 4: Polish
+16) Add error handling throughout
+17) Add structured logging
+18) Write unit tests
+19) Manual acceptance testing
+
+SCALABILITY HOOKS (for later)
+- Auth: Swap hardcoded userId → extract from Clerk token (no code changes needed)
+- Database: Swap MemoryIndex → DatabaseIndex (implement interface)
+- Virtual FS: Swap LocalFileSystem → VirtualFileSystem (implement interface)
+- Sandboxing: Swap SimpleToolExecutor → SandboxedToolExecutor (implement interface)
