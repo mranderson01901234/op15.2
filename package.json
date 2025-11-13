@@ -63,5 +63,9 @@
     "typescript": "^5",
     "vitest": "^2.1.8"
   },
-  "packageManager": "pnpm@10.20.0"
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=10.20.0"
+  }
 }
