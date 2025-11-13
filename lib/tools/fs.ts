@@ -73,7 +73,7 @@ export async function handleFsList(
       }));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error('Browser bridge failed', {
+      logger.error('Browser bridge failed', error instanceof Error ? error : undefined, {
         userId: context.userId,
         path: args.path,
         error: errorMessage,
