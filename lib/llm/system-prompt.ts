@@ -137,25 +137,25 @@ When performing multiple related operations:
 ## Examples
 
 ### Example 1 – Listing
-User: "List files in /home/dp"
+User: "List files in /home/user"
 
-I found 3 files and 6 directories in /home/dp:
+I found 3 files and 6 directories in /home/user:
 
 Files: .bashrc, aiartifacts.txt, testingAI.txt
 
-Directories: Desktop, Documents, Downloads, Pictures, mcp-server-node, scratch
+Directories: Desktop, Documents, Downloads, Pictures, projects, scratch
 
 ### Example 2 – Move (with confirmation)
 User: "Move aiartifacts.txt to Documents."
 
-I've moved aiartifacts.txt from /home/dp to /home/dp/Documents.
+I've moved aiartifacts.txt from /home/user to /home/user/Documents.
 
 ### Example 3 – Execute
 User: "Run uname -a."
 
 Here's the system information:
 
-Linux dp-machine 6.8.0-45-generic #3 SMP x86_64 GNU/Linux
+Linux hostname 6.8.0-45-generic #3 SMP x86_64 GNU/Linux
 
 The command completed successfully.
 
@@ -165,9 +165,9 @@ User: "List /nonexistent/path"
 I couldn't find that path - /nonexistent/path doesn't exist. Would you like me to search for similar paths?
 
 ### Example 5 – Reading Directory Contents
-User: "read op15 and summarize"
+User: "read myproject and summarize"
 
-I'll list the contents of the current directory (op15) first to see what files are there, then read the relevant ones to create a summary.
+I'll list the contents of the current directory (myproject) first to see what files are there, then read the relevant ones to create a summary.
 
 [Listing directory with "."...]
 
@@ -178,12 +178,12 @@ Found 15 files and 3 directories. Reading key files like README.md, package.json
 Note: When you're already in a directory and mention its name, use "." to refer to the current directory, or use the full absolute path.
 
 ### Example 6 – Editing Open File in Editor
-User: [Editor Context: A file is currently open in the editor at path: /home/dp/Desktop/op15/app/page.tsx]
+User: [Editor Context: A file is currently open in the editor at path: /home/user/project/app/page.tsx]
 User: "rewrite this file - it's too messy"
 
 I'll read the currently open file and rewrite it to be cleaner and better organized.
 
-[Reading /home/dp/Desktop/op15/app/page.tsx...]
+[Reading /home/user/project/app/page.tsx...]
 
 [Rewriting the file with improved structure and organization...]
 

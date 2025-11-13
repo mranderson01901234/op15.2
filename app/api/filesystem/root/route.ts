@@ -7,7 +7,8 @@ import { NextResponse } from "next/server";
 export async function GET() {
   try {
     // Get WORKSPACE_ROOT directly without requiring GEMINI_API_KEY
-    const rootPath = process.env.WORKSPACE_ROOT || process.cwd() || "/";
+    // Defaults to "/" (filesystem root) instead of process.cwd() to work with any directory
+    const rootPath = process.env.WORKSPACE_ROOT || "/";
     
     return NextResponse.json({ rootPath });
   } catch (error) {

@@ -91,7 +91,7 @@ The service will start on `http://localhost:7071` (default port).
 
 ### 3. Verify Environment Variables
 
-Make sure `.env.local` exists in `/home/dp/Desktop/op15/` with:
+Make sure `.env.local` exists in your project directory with:
 ```env
 BROWSER_SERVICE_URL=http://localhost:7071
 NEXT_PUBLIC_BROWSER_SERVICE_URL=ws://localhost:7071
@@ -100,7 +100,7 @@ NEXT_PUBLIC_BROWSER_SERVICE_URL=ws://localhost:7071
 ### 4. Start op15 Application
 
 ```bash
-cd /home/dp/Desktop/op15
+cd /path/to/your/project
 pnpm dev
 ```
 

@@ -89,12 +89,22 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
       await localBridge.connect(unrestrictedMode);
       console.log('Bridge connection completed successfully');
 
+      // 4. Get selected directory name from bridge
+      const selectedDirName = (localBridge as any).dirHandle?.name || 'Selected Directory';
+      // Try to construct full path - browser API doesn't give us full path, but we can use the name
+      // For now, store just the name and we'll display it
+      const selectedDirPath = selectedDirName;
+
       // 4. Store connection state
       setBridge(localBridge);
       setIsConnected(true);
       localStorage.setItem('localEnvConnected', 'true');
       localStorage.setItem('localEnvServerUrl', serverUrl);
       localStorage.setItem('localEnvUnrestricted', unrestrictedMode.toString());
+      localStorage.setItem('localEnvSelectedDir', selectedDirPath);
+
+      // Dispatch custom event to update sidebar
+      window.dispatchEvent(new CustomEvent('localEnvDirChanged', { detail: { path: selectedDirPath } }));
 
       logger.info('Local environment connected', { userId: user.id });
     } catch (err) {
@@ -117,6 +127,9 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
     setIsConnected(false);
     localStorage.removeItem('localEnvConnected');
     localStorage.removeItem('localEnvServerUrl');
+    localStorage.removeItem('localEnvSelectedDir');
+    // Dispatch custom event to update sidebar
+    window.dispatchEvent(new CustomEvent('localEnvDirChanged', { detail: { path: null } }));
   };
 
   if (!isLoaded || !user) {
@@ -144,15 +157,6 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
             Unrestricted mode (select parent directory)
           </span>
         </label>
-      )}
-      {!isConnected && !isConnecting && unrestrictedMode && (
-        <div className="text-xs px-3 py-1.5 text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-md">
-          <div className="font-medium mb-1">Unrestricted Mode Active</div>
-          <div>Select the HIGHEST directory you want access to. For example:</div>
-          <div className="mt-1 font-mono text-[11px]">• Select /home to access all user directories</div>
-          <div className="font-mono text-[11px]">• Select /home/user to access only that user's files</div>
-          <div className="mt-1 text-[11px] opacity-90">You cannot navigate to parent directories after selection.</div>
-        </div>
       )}
       <button
         onClick={isConnected ? handleDisconnect : handleConnect}

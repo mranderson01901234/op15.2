@@ -55,7 +55,9 @@ function FileTreeNode({
 
       if (response.ok) {
         const data = await response.json();
-        setChildren(data.entries || []);
+        // Ensure entries is an array
+        const entriesArray = Array.isArray(data.entries) ? data.entries : [];
+        setChildren(entriesArray);
       }
     } catch (error) {
       console.error("Failed to load directory:", error);
@@ -164,7 +166,9 @@ export function FileTree({ rootPath = ".", onFileSelect, selectedPath }: FileTre
 
       if (response.ok) {
         const data = await response.json();
-        const entries = (data.entries || []).sort((a: FileEntry, b: FileEntry) => {
+        // Ensure entries is an array before sorting
+        const entriesArray = Array.isArray(data.entries) ? data.entries : [];
+        const entries = entriesArray.sort((a: FileEntry, b: FileEntry) => {
           // Directories first, then files, both alphabetically
           if (a.kind !== b.kind) {
             return a.kind === "directory" ? -1 : 1;

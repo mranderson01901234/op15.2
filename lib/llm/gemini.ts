@@ -660,8 +660,8 @@ export class GeminiClient {
               text = candidate.text;
             }
             
-            // Extract text from all parts if available
-            if (candidate.content?.parts) {
+            // Extract text from all parts if available (only if we don't already have text)
+            if (candidate.content?.parts && !text) {
               const textParts: string[] = [];
               for (const part of candidate.content.parts) {
                 // Only extract text parts, ignore thoughtSignature and functionCall
@@ -672,9 +672,8 @@ export class GeminiClient {
                 // functionCall is handled above in the functionCalls check
               }
               if (textParts.length > 0) {
-                // Combine with existing text if any
-                const partsText = textParts.join("");
-                text = text ? text + partsText : partsText;
+                // Use parts text only if we don't have text from chunk.text or candidate.text
+                text = textParts.join("");
               }
             }
           }
