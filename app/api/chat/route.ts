@@ -339,6 +339,26 @@ export async function POST(req: NextRequest) {
                 }
               }
               
+              // Check if this is an fs.list response with formatted content
+              if (functionResponse.name === "fs.list" && functionResponse.response && typeof functionResponse.response === "object") {
+                const response = functionResponse.response as { 
+                  _formatted?: boolean;
+                  content?: string;
+                  directories?: number;
+                  files?: number;
+                  total?: number;
+                };
+                
+                // If it's formatted, send the content as text so it appears in the response
+                if (response._formatted && response.content) {
+                  const formattedContent = `data: ${JSON.stringify({
+                    type: "text",
+                    content: response.content,
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(formattedContent));
+                }
+              }
+              
               data = `data: ${JSON.stringify({
                 type: "function_response",
                 functionResponse: chunk.functionResponse,

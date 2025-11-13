@@ -96,9 +96,22 @@ export class LocalEnvBridge {
         console.log('Unrestricted mode enabled: Please select a high-level directory (e.g., your home directory) to access files across multiple folders.');
       }
       
-      this.dirHandle = await showDirectoryPicker({
-        mode: 'readwrite',
-      });
+      try {
+        this.dirHandle = await showDirectoryPicker({
+          mode: 'readwrite',
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // Check if it's a system directory restriction
+        if (errorMessage.includes('system') || errorMessage.includes('restricted') || errorMessage.includes('denied')) {
+          throw new Error(
+            `Cannot select this directory: The browser's File System Access API restricts access to system directories ` +
+            `(like /, /root, /etc, /sys, /proc on Linux, or C:\\Windows on Windows) for security reasons. ` +
+            `Please select a non-system directory instead, such as /home or a subdirectory within your home directory.`
+          );
+        }
+        throw error;
+      }
 
       // 2. Connect WebSocket to cloud server bridge endpoint
       await this.connectWebSocket();
@@ -478,7 +491,35 @@ export class LocalEnvBridge {
       throw new Error('File system access not granted');
     }
 
+    // Handle empty path or current directory
+    if (!path || path === '.' || path === '') {
+      const entries: Array<{ name: string; kind: string; path: string }> = [];
+      for await (const [name, handle] of this.dirHandle.entries()) {
+        entries.push({
+          name,
+          kind: handle.kind,
+          path: name,
+        });
+      }
+      return entries;
+    }
+
     const parts = path.split('/').filter(Boolean);
+    
+    // If path is absolute and matches the root directory name, list root directly
+    // e.g., if root is /home and path is /home, parts = ['home'] and dirHandle.name = 'home'
+    if (path.startsWith('/') && parts.length === 1 && parts[0] === this.dirHandle.name) {
+      const entries: Array<{ name: string; kind: string; path: string }> = [];
+      for await (const [name, handle] of this.dirHandle.entries()) {
+        entries.push({
+          name,
+          kind: handle.kind,
+          path: name,
+        });
+      }
+      return entries;
+    }
+
     let current = this.dirHandle;
 
     // Navigate to target directory

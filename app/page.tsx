@@ -2017,6 +2017,25 @@ export default function Home() {
                   }
                 } else if (parsed.type === "function_call") {
                   console.log("Tool call:", parsed.functionCall);
+                  // Store tool call in the message
+                  if (currentChatId) {
+                    updateChatMessages(currentChatId, (prev: Message[]) =>
+                      prev.map((msg: Message) =>
+                        msg.id === assistantMessageId
+                          ? {
+                              ...msg,
+                              toolCalls: [
+                                ...(msg.toolCalls || []),
+                                {
+                                  name: parsed.functionCall.name,
+                                  args: parsed.functionCall.args,
+                                },
+                              ],
+                            }
+                          : msg
+                      )
+                    );
+                  }
                 } else if (parsed.type === "images") {
                   if (currentChatId) {
                     updateChatMessages(currentChatId, (prev: Message[]) =>
@@ -2218,7 +2237,18 @@ export default function Home() {
           <div className="mx-auto max-w-5xl w-full pt-32 pb-24">
             {messages.map((message, index) => {
               // Only show assistant messages if they have content (avoid showing empty streaming placeholders)
-              const shouldShow = message.role === "user" || message.content || message.formattedSearch || (message.images && message.images.length > 0) || (message.videos && message.videos.length > 0);
+              // Show if: user message, has content, has formatted search, has media, has tool calls, OR is currently loading
+              const hasContent = message.content && message.content.trim().length > 0;
+              const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
+              const hasMedia = (message.images && message.images.length > 0) || (message.videos && message.videos.length > 0);
+              const isCurrentlyStreaming = message.role === "assistant" && index === messages.length - 1 && (isLoading || isProcessing);
+
+              const shouldShow = message.role === "user" ||
+                                 hasContent ||
+                                 message.formattedSearch ||
+                                 hasMedia ||
+                                 hasToolCalls ||
+                                 isCurrentlyStreaming;
 
               if (!shouldShow) return null;
 
@@ -2353,8 +2383,9 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+
                   {/* Regular content (only show if no formatted search) */}
-                  {message.content && !message.formattedSearch && (
+                  {!message.formattedSearch && (hasContent || (hasToolCalls && message.role === "assistant") || isCurrentlyStreaming || isStreaming) && (
                     <div className={message.role === "user" ? "space-y-1" : "space-y-2"}>
                       <div
                         data-message-id={message.id}
@@ -2374,7 +2405,7 @@ export default function Home() {
                           textWrap: message.role === "user" ? "balance" : "normal",
                         } as React.CSSProperties}
                       >
-                        {formatMessageContent(
+                        {message.content && message.content.trim().length > 0 ? formatMessageContent(
                           message.role === "user"
                             ? preventOrphanedWords(
                                 // Filter out "Imagen 4" or "Imagen" references and generation messages from content
@@ -2393,7 +2424,9 @@ export default function Home() {
                                 .replace(/I've\s+generated\s+\d+\s+image/i, '')
                                 .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                 .trim()
-                        )}
+                        ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
+                          <ProcessingIndicator />
+                        ) : null}
                       </div>
                       {/* Timestamp - only for assistant, hide while streaming */}
                       {message.role === "assistant" && !isStreaming && (
@@ -2518,13 +2551,12 @@ export default function Home() {
               </div>
               );
             })}
-            {/* Processing Indicator - hide once response starts streaming */}
+            {/* Processing Indicator - only show if no assistant message exists yet (before first tool call or content) */}
             {isProcessing && (() => {
-              // Find the last assistant message to check if it has content
+              // Find the last assistant message to check if it exists
               const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
-              const hasStartedStreaming = lastAssistantMessage && lastAssistantMessage.content && lastAssistantMessage.content.length > 0;
-              // Only show if processing but no content has started streaming yet
-              return !hasStartedStreaming;
+              // Only show bottom indicator if no assistant message exists yet (before message container is created)
+              return !lastAssistantMessage;
             })() && (
               <div className="flex justify-start mb-6">
                 <div className="max-w-[85%]">

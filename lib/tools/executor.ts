@@ -55,7 +55,8 @@ export class SimpleToolExecutor implements ToolExecutor {
     const sanitizedCommand = this.sanitizeCommand(command);
     
     const env = getEnv();
-    const cwd = options?.cwd || env.WORKSPACE_ROOT || process.cwd();
+    // Default to "/" (filesystem root) instead of process.cwd() to work with any directory
+    const cwd = options?.cwd || env.WORKSPACE_ROOT || "/";
     const timeoutMs = options?.timeoutMs || 60000;
 
     return new Promise((resolve, reject) => {

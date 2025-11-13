@@ -14,7 +14,7 @@ import { getEnv } from "@/lib/utils/env";
 export class LocalFileSystem implements FileSystem {
   private getWorkspaceRoot(context: UserContext): string {
     const env = getEnv();
-    return env.WORKSPACE_ROOT || process.cwd();
+    return env.WORKSPACE_ROOT || "/";
   }
 
   async resolve(filePath: string, context: UserContext): Promise<string> {
@@ -34,11 +34,24 @@ export class LocalFileSystem implements FileSystem {
     const normalizedRoot = path.normalize(resolvedRoot);
     
     // Prevent path traversal attacks - ensure resolved path is within workspace root
-    if (!normalizedResolved.startsWith(normalizedRoot + path.sep) && normalizedResolved !== normalizedRoot) {
-      throw new FileSystemError(
-        `Path traversal detected: "${filePath}" resolves outside workspace root`,
-        filePath
-      );
+    // Special case: if workspace root is "/" (filesystem root), allow all absolute paths
+    if (normalizedRoot === "/") {
+      // When root is "/", allow all absolute paths (they're all within filesystem root)
+      if (!path.isAbsolute(normalizedResolved)) {
+        throw new FileSystemError(
+          `Invalid relative path: "${filePath}" - relative paths require a non-root workspace`,
+          filePath
+        );
+      }
+    } else {
+      // For non-root workspaces, check that path is within workspace
+      const rootWithSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
+      if (!normalizedResolved.startsWith(rootWithSep) && normalizedResolved !== normalizedRoot) {
+        throw new FileSystemError(
+          `Path traversal detected: "${filePath}" resolves outside workspace root "${normalizedRoot}"`,
+          filePath
+        );
+      }
     }
     
     return normalizedResolved;

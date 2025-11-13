@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { handleFsList } from "@/lib/tools/fs";
 import { logger } from "@/lib/utils/logger";
 import { auth } from "@clerk/nextjs/server";
 import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
 import type { UserContext } from "@/lib/types/user-context";
+import { LocalFileSystem } from "@/lib/storage/local-fs";
 
 const requestSchema = z.object({
   path: z.string().min(1, "Path is required"),
@@ -40,7 +40,53 @@ export async function POST(req: NextRequest) {
 
     logger.info("Filesystem list request", { path, depth, userId: context.userId });
 
-    const entries = await handleFsList({ path, depth }, context);
+    // Get raw entries for file tree (not formatted output)
+    let entries: Array<{ name: string; path: string; kind: string; size?: number; mtime?: string }> = [];
+
+    // Check if browser bridge is connected
+    const bridgeManager = getBridgeManager();
+    if (browserBridgeConnected && bridgeManager.isConnected(authenticatedUserId)) {
+      try {
+        const result = await bridgeManager.requestBrowserOperation(
+          authenticatedUserId,
+          'fs.list',
+          { path: path || '.' }
+        ) as Array<{ name: string; kind: string; path: string }>;
+        
+        // Transform browser bridge response to match expected format
+        entries = result.map((entry) => ({
+          name: entry.name,
+          path: entry.path,
+          kind: entry.kind,
+          size: undefined, // Browser API doesn't provide size
+          mtime: undefined, // Browser API doesn't provide mtime
+        }));
+      } catch (error) {
+        logger.warn('Browser bridge failed, falling back to server-side', {
+          userId: authenticatedUserId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        // Fall through to server-side implementation
+      }
+    }
+
+    // Server-side fallback (if bridge not used or failed)
+    if (entries.length === 0) {
+      const fileSystem = new LocalFileSystem();
+      const fsEntries = await fileSystem.list(path, context, depth || 0);
+      entries = fsEntries.map((entry) => ({
+        name: entry.name,
+        path: entry.path,
+        kind: entry.kind,
+        size: entry.size,
+        mtime: entry.mtime?.toISOString(),
+      }));
+    }
+
+    // Ensure entries is always an array
+    if (!Array.isArray(entries)) {
+      entries = [];
+    }
 
     return NextResponse.json({ entries });
   } catch (error) {

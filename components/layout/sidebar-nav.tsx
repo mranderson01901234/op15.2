@@ -13,6 +13,7 @@ type TabType = "chats" | "filesystem";
 
 export function SidebarNav() {
   const [rootPath, setRootPath] = useState<string>(".");
+  const [selectedDirPath, setSelectedDirPath] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>("chats");
   const [isHovered, setIsHovered] = useState(false);
   const { selectedPath, setSelectedPath, openFile } = useWorkspace();
@@ -22,26 +23,59 @@ export function SidebarNav() {
   const { userId, isLoaded: authLoaded } = useAuth();
 
   useEffect(() => {
-    // Only fetch the environment root path if user is authenticated
-    if (!authLoaded) return;
-    
-    if (!userId) {
-      // User is signed out - clear the root path
-      setRootPath(".");
-      return;
+    // Check for browser bridge selected directory
+    const storedSelectedDir = localStorage.getItem('localEnvSelectedDir');
+    if (storedSelectedDir) {
+      setSelectedDirPath(storedSelectedDir);
+      setRootPath(storedSelectedDir);
+    } else {
+      // Only fetch the environment root path if user is authenticated and no browser bridge dir
+      if (!authLoaded) return;
+      
+      if (!userId) {
+        // User is signed out - clear the root path
+        setRootPath(".");
+        setSelectedDirPath(null);
+        return;
+      }
+
+      // User is authenticated - fetch the root path
+      fetch("/api/filesystem/root")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.rootPath) {
+            setRootPath(data.rootPath);
+          }
+        })
+        .catch((error) => {
+          console.error("Failed to load root path:", error);
+        });
     }
 
-    // User is authenticated - fetch the root path
-    fetch("/api/filesystem/root")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.rootPath) {
-          setRootPath(data.rootPath);
+    // Listen for browser bridge directory changes
+    const handleDirChange = (e: CustomEvent<{ path: string | null }>) => {
+      if (e.detail.path) {
+        setSelectedDirPath(e.detail.path);
+        setRootPath(e.detail.path);
+      } else {
+        setSelectedDirPath(null);
+        // Fall back to workspace root
+        if (authLoaded && userId) {
+          fetch("/api/filesystem/root")
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.rootPath) {
+                setRootPath(data.rootPath);
+              }
+            })
+            .catch((error) => {
+              console.error("Failed to load root path:", error);
+            });
         }
-      })
-      .catch((error) => {
-        console.error("Failed to load root path:", error);
-      });
+      }
+    };
+    window.addEventListener('localEnvDirChanged', handleDirChange as EventListener);
+    return () => window.removeEventListener('localEnvDirChanged', handleDirChange as EventListener);
   }, [authLoaded, userId]);
 
   const handleFileSelect = async (path: string) => {
@@ -118,13 +152,17 @@ export function SidebarNav() {
               ? "border-primary text-sidebar-foreground bg-sidebar-accent/50"
               : "border-transparent text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/30"
           )}
-          title={isCollapsed ? "Files" : undefined}
+          title={isCollapsed ? (selectedDirPath || "Files") : undefined}
         >
           <FolderOpen className={cn(
             "h-4 w-4 shrink-0 transition-transform duration-200",
             activeTab === "filesystem" && "scale-110"
           )} />
-          {!isCollapsed && <span>Files</span>}
+          {!isCollapsed && (
+            <span className="truncate">
+              {selectedDirPath ? `/${selectedDirPath}` : "Files"}
+            </span>
+          )}
         </button>
       </div>
 
@@ -184,16 +222,6 @@ export function SidebarNav() {
         ) : (
           !isCollapsed && (
             <div className="flex flex-col h-full relative">
-              <SidebarGroup className="mt-2 flex-shrink-0">
-                <SidebarGroupLabel>
-                  Explorer
-                  {authLoaded && userId && rootPath !== "." && (
-                    <span className="text-xs text-muted-foreground ml-2 font-normal">
-                      {rootPath}
-                    </span>
-                  )}
-                </SidebarGroupLabel>
-              </SidebarGroup>
               {/* File tree container that scrolls under bottom section */}
               <div className="flex-1 min-h-0 relative overflow-hidden">
                 <div className="h-full overflow-y-auto premium-scrollbar pb-[25%]">
