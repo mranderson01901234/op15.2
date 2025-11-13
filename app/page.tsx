@@ -1986,9 +1986,11 @@ export default function Home() {
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
+          
+          if (!done && value) {
+            buffer += decoder.decode(value, { stream: true });
+          }
+          
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
 
@@ -2111,6 +2113,42 @@ export default function Home() {
                 console.error("Failed to parse SSE data:", e);
               }
             }
+          }
+          
+          // Process any remaining buffer data when stream ends
+          if (done) {
+            // Process any remaining data in buffer
+            if (buffer.trim()) {
+              const remainingLines = buffer.split("\n");
+              for (const line of remainingLines) {
+                if (line.startsWith("data: ")) {
+                  const data = line.slice(6);
+                  if (data === "[DONE]") {
+                    setIsLoading(false);
+                    setIsProcessing(false);
+                    return;
+                  }
+                  try {
+                    const parsed = JSON.parse(data);
+                    if (parsed.type === "text" && currentChatId) {
+                      updateChatMessages(currentChatId, (prev: Message[]) =>
+                        prev.map((msg: Message) =>
+                          msg.id === assistantMessageId
+                            ? { ...msg, content: msg.content + parsed.content }
+                            : msg
+                        )
+                      );
+                    }
+                  } catch (e) {
+                    console.error("Failed to parse final SSE data:", e);
+                  }
+                }
+              }
+            }
+            // Always clear loading states when stream ends
+            setIsLoading(false);
+            setIsProcessing(false);
+            break;
           }
         }
       } catch (error) {
