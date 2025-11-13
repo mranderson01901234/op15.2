@@ -710,6 +710,7 @@ export class GeminiClient {
               previousText = text;
             }
           }
+        }
         } finally {
           // Restore original console methods
           console.warn = originalConsoleWarn;
@@ -807,7 +808,7 @@ export class GeminiClient {
       }
       // Success - break out of retry loop
       break;
-      } catch (error) {
+    } catch (error) {
         // Check if this is a retryable error (503 Service Unavailable)
         if (this.isRetryableError(error) && retryCount < MAX_RETRIES) {
           retryCount++;
