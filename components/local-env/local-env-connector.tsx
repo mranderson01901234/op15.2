@@ -146,8 +146,12 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
         </label>
       )}
       {!isConnected && !isConnecting && unrestrictedMode && (
-        <div className="text-xs px-3 py-1.5 text-muted-foreground/80">
-          When connecting, select a high-level directory (e.g., your home directory) to access files across multiple folders.
+        <div className="text-xs px-3 py-1.5 text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-md">
+          <div className="font-medium mb-1">Unrestricted Mode Active</div>
+          <div>Select the HIGHEST directory you want access to. For example:</div>
+          <div className="mt-1 font-mono text-[11px]">• Select /home to access all user directories</div>
+          <div className="font-mono text-[11px]">• Select /home/user to access only that user's files</div>
+          <div className="mt-1 text-[11px] opacity-90">You cannot navigate to parent directories after selection.</div>
         </div>
       )}
       <button
