@@ -20,6 +20,7 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bridge, setBridge] = useState<LocalEnvBridge | null>(null);
+  const [unrestrictedMode, setUnrestrictedMode] = useState(false);
 
   useEffect(() => {
     // Check if bridge is already connected
@@ -27,6 +28,11 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
     const storedConnection = localStorage.getItem('localEnvConnected');
     if (storedConnection === 'true') {
       setIsConnected(true);
+    }
+    // Restore unrestricted mode preference
+    const storedUnrestricted = localStorage.getItem('localEnvUnrestricted');
+    if (storedUnrestricted === 'true') {
+      setUnrestrictedMode(true);
     }
   }, []);
 
@@ -79,8 +85,8 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
       const localBridge = new LocalEnvBridge(serverUrl, user.id);
       
       // 3. Connect (this will request file system access)
-      console.log('Starting bridge connection...');
-      await localBridge.connect();
+      console.log('Starting bridge connection...', { unrestrictedMode });
+      await localBridge.connect(unrestrictedMode);
       console.log('Bridge connection completed successfully');
 
       // 4. Store connection state
@@ -88,6 +94,7 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
       setIsConnected(true);
       localStorage.setItem('localEnvConnected', 'true');
       localStorage.setItem('localEnvServerUrl', serverUrl);
+      localStorage.setItem('localEnvUnrestricted', unrestrictedMode.toString());
 
       logger.info('Local environment connected', { userId: user.id });
     } catch (err) {
@@ -125,6 +132,24 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
 
   return (
     <div className="flex flex-col gap-1">
+      {!isConnected && !isConnecting && isBrowserCompatible && (
+        <label className="px-3 py-1.5 flex items-center gap-2 cursor-pointer hover:bg-muted rounded-md transition-colors">
+          <input
+            type="checkbox"
+            checked={unrestrictedMode}
+            onChange={(e) => setUnrestrictedMode(e.target.checked)}
+            className="h-3 w-3 rounded border-muted-foreground"
+          />
+          <span className="text-xs text-muted-foreground">
+            Unrestricted mode (select parent directory)
+          </span>
+        </label>
+      )}
+      {!isConnected && !isConnecting && unrestrictedMode && (
+        <div className="text-xs px-3 py-1.5 text-muted-foreground/80">
+          When connecting, select a high-level directory (e.g., your home directory) to access files across multiple folders.
+        </div>
+      )}
       <button
         onClick={isConnected ? handleDisconnect : handleConnect}
         disabled={isConnecting || !isBrowserCompatible}

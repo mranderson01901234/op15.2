@@ -77,8 +77,9 @@ export class LocalEnvBridge {
 
   /**
    * Connect to cloud server and request file system access
+   * @param unrestrictedMode - If true, user should select a high-level directory (e.g., home directory) for broader access
    */
-  async connect(): Promise<void> {
+  async connect(unrestrictedMode: boolean = false): Promise<void> {
     try {
       // Check if File System Access API is supported
       if (!LocalEnvBridge.isSupported()) {
@@ -87,7 +88,14 @@ export class LocalEnvBridge {
       }
 
       // 1. Request file system access (one-click authorization)
+      // Note: File System Access API restricts access to the selected directory and its subdirectories.
+      // For "unrestricted" access, users should select a high-level directory (e.g., home directory).
       const showDirectoryPicker = (window as any).showDirectoryPicker as (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
+      
+      if (unrestrictedMode) {
+        console.log('Unrestricted mode enabled: Please select a high-level directory (e.g., your home directory) to access files across multiple folders.');
+      }
+      
       this.dirHandle = await showDirectoryPicker({
         mode: 'readwrite',
       });

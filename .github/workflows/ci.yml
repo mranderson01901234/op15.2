@@ -9,6 +9,14 @@ on:
 jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      checks: write
+      pull-requests: write
+      issues: write
+      packages: write
+      deployments: write
     
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +48,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: lint-and-typecheck
+    permissions:
+      contents: write
+      actions: write
+      checks: write
+      packages: write
+      deployments: write
     
     steps:
       - uses: actions/checkout@v4
