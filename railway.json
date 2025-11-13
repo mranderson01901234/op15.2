@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "pnpm start",
+    "startCommand": "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

@@ -12,5 +12,5 @@ cmds = [
 ]
 
 [start]
-cmd = "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm start"
+cmd = "sh -c 'export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm start'"
 
