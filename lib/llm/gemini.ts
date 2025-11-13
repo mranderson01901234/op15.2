@@ -629,7 +629,8 @@ export class GeminiClient {
           }
 
           // Process text delta
-          if (text && !hasFunctionCalls) {
+          // Yield text chunks regardless of function calls - they can coexist
+          if (text) {
             const delta = text.startsWith(previousText)
               ? text.slice(previousText.length)
               : text;
