@@ -584,11 +584,45 @@ export class GeminiClient {
           throw new Error('Failed to create stream after retries');
         }
 
+        // Suppress SDK warning about non-text parts (functionCall, thoughtSignature)
+        // This is expected behavior when function calls are present
+        const originalConsoleWarn = console.warn;
+        const originalConsoleLog = console.log;
+        const suppressedMessages = [
+          'there are non-text parts',
+          'functionCall',
+          'thoughtSignature',
+          'concatenation of all text parts',
+          'Please refer to the non text parts',
+        ];
+        const suppressMessage = (message: string): boolean => {
+          return suppressedMessages.some(msg => message.toLowerCase().includes(msg.toLowerCase()));
+        };
+        console.warn = (...args: any[]) => {
+          const message = args.join(' ');
+          // Suppress SDK warnings about non-text parts - this is expected and handled properly
+          if (suppressMessage(message)) {
+            return; // Suppress this warning
+          }
+          // Allow other warnings through
+          originalConsoleWarn.apply(console, args);
+        };
+        console.log = (...args: any[]) => {
+          const message = args.join(' ');
+          // Suppress SDK log messages about non-text parts
+          if (suppressMessage(message)) {
+            return; // Suppress this log
+          }
+          // Allow other logs through
+          originalConsoleLog.apply(console, args);
+        };
+
         let previousText = "";
         let functionCalls: Array<{ id?: string; name: string; args: Record<string, unknown> }> = [];
         let hasFunctionCalls = false;
 
-        for await (const chunk of stream) {
+        try {
+          for await (const chunk of stream) {
           // Check for function calls
           if (chunk.functionCalls && chunk.functionCalls.length > 0) {
             hasFunctionCalls = true;
@@ -675,6 +709,10 @@ export class GeminiClient {
               previousText = text;
             }
           }
+        } finally {
+          // Restore original console methods
+          console.warn = originalConsoleWarn;
+          console.log = originalConsoleLog;
         }
 
         // Execute function calls if any
