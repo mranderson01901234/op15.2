@@ -63,9 +63,17 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
         throw new Error(errorMessage);
       }
 
-      const { serverUrl, websocketUrl } = await response.json();
+      const data = await response.json();
+      const { serverUrl, websocketUrl } = data;
 
-      console.log('Received server details', { serverUrl, websocketUrl, userId: user.id });
+      console.log('Received server details', { serverUrl, websocketUrl, userId: user.id, fullData: data });
+
+      // Validate serverUrl is present and valid
+      if (!serverUrl || serverUrl === 'undefined' || serverUrl.includes('undefined')) {
+        const errorMsg = `Invalid server URL received from API: ${serverUrl}. Please check your NEXT_PUBLIC_APP_URL or RAILWAY_PUBLIC_DOMAIN environment variable.`;
+        console.error(errorMsg, { serverUrl, data });
+        throw new Error(errorMsg);
+      }
 
       // 2. Initialize browser bridge
       const localBridge = new LocalEnvBridge(serverUrl, user.id);

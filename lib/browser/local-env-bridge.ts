@@ -32,6 +32,10 @@ export class LocalEnvBridge {
   private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(serverUrl: string, userId: string) {
+    // Validate serverUrl is not undefined or empty
+    if (!serverUrl || serverUrl === 'undefined' || serverUrl.includes('undefined')) {
+      throw new Error(`Invalid serverUrl provided to LocalEnvBridge: ${serverUrl}. The API should return a valid server URL.`);
+    }
     this.serverUrl = serverUrl;
     this.userId = userId;
   }
@@ -115,6 +119,11 @@ export class LocalEnvBridge {
    * Connect WebSocket with automatic reconnection
    */
   private async connectWebSocket(): Promise<void> {
+    // Validate serverUrl again (defensive check)
+    if (!this.serverUrl || this.serverUrl === 'undefined' || this.serverUrl.includes('undefined')) {
+      throw new Error(`Cannot connect WebSocket: serverUrl is invalid (${this.serverUrl}). Please ensure NEXT_PUBLIC_APP_URL or RAILWAY_PUBLIC_DOMAIN is set correctly.`);
+    }
+
     // Check if we're on Vercel (which doesn't support WebSocket)
     if (this.isVercelDeployment()) {
       const error = new Error('WebSocket connections are not supported on Vercel. The local environment bridge requires a persistent WebSocket connection, which is not available on Vercel serverless functions. Please use a custom server deployment or a third-party WebSocket service.');
