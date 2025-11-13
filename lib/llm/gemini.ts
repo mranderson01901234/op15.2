@@ -608,37 +608,72 @@ export class GeminiClient {
           }
 
           // Extract text content from all parts
+          // The Gemini SDK may concatenate text parts when non-text parts (thoughtSignature, functionCall) are present
           let text = "";
+          
+          // First, try direct text property (SDK may have already concatenated)
           if (chunk.text) {
             text = chunk.text;
-          } else if ((chunk as any).candidates && (chunk as any).candidates[0]) {
+          }
+          
+          // Also check candidates structure for text parts
+          if ((chunk as any).candidates && (chunk as any).candidates[0]) {
             const candidate = (chunk as any).candidates[0];
+            
+            // Check if candidate has direct text property
+            if (candidate.text && !text) {
+              text = candidate.text;
+            }
+            
+            // Extract text from all parts if available
             if (candidate.content?.parts) {
-              // Extract text from all text parts (ignore thoughtSignature and functionCall parts)
               const textParts: string[] = [];
               for (const part of candidate.content.parts) {
-                if (part.text) {
+                // Only extract text parts, ignore thoughtSignature and functionCall
+                if (part.text && typeof part.text === 'string') {
                   textParts.push(part.text);
                 }
-                // Note: thoughtSignature and functionCall parts are handled separately
-                // thoughtSignature is internal reasoning we can ignore
+                // Note: thoughtSignature is internal reasoning we can ignore
                 // functionCall is handled above in the functionCalls check
               }
-              text = textParts.join("");
+              if (textParts.length > 0) {
+                // Combine with existing text if any
+                const partsText = textParts.join("");
+                text = text ? text + partsText : partsText;
+              }
             }
           }
 
           // Process text delta
           // Yield text chunks regardless of function calls - they can coexist
           if (text) {
-            const delta = text.startsWith(previousText)
-              ? text.slice(previousText.length)
-              : text;
-
-            if (delta) {
-              yield { type: "text", text: delta };
+            // Calculate delta - text should be cumulative (all text so far)
+            let delta: string;
+            if (previousText && text.length >= previousText.length && text.startsWith(previousText)) {
+              // Normal case: new text extends previous
+              delta = text.slice(previousText.length);
+            } else if (previousText && text !== previousText) {
+              // Edge case: text doesn't extend previous (might be SDK concatenation after function call)
+              // Try to find where previousText ends in the new text
+              const prevIndex = text.indexOf(previousText);
+              if (prevIndex >= 0 && prevIndex + previousText.length < text.length) {
+                delta = text.slice(prevIndex + previousText.length);
+              } else {
+                // No overlap found, use full text (might be a new response segment)
+                delta = text;
+                previousText = ""; // Reset tracking
+              }
+            } else {
+              // First chunk or same text
+              delta = text;
             }
-            previousText = text;
+
+            // Only yield non-empty deltas
+            if (delta && delta.length > 0) {
+              yield { type: "text", text: delta };
+              // Update previousText to track accumulated text
+              previousText = text;
+            }
           }
         }
 
