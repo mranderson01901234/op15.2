@@ -530,6 +530,11 @@ export class GeminiClient {
       while (iterationCount < MAX_ITERATIONS) {
         iterationCount++;
 
+        // Reset state for this iteration
+        let previousText = "";
+        let functionCalls: Array<{ id?: string; name: string; args: Record<string, unknown> }> = [];
+        let hasFunctionCalls = false;
+
         // Build tools array - include function declarations and optionally file search
         const tools: any[] = [{ functionDeclarations: FUNCTION_REGISTRY }];
         
@@ -616,10 +621,6 @@ export class GeminiClient {
           // Allow other logs through
           originalConsoleLog.apply(console, args);
         };
-
-        let previousText = "";
-        let functionCalls: Array<{ id?: string; name: string; args: Record<string, unknown> }> = [];
-        let hasFunctionCalls = false;
 
         try {
           for await (const chunk of stream) {
