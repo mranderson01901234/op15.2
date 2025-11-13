@@ -46,23 +46,60 @@ export async function POST(
 
     logger.info('Local environment connection request', { userId });
 
-    // For now, we'll use the main server URL
-    // In production, this would spawn a dedicated server instance per user
-    const serverUrl = process.env.NEXT_PUBLIC_APP_URL || 
-                     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` :
-                     'http://localhost:3000';
-
+    // Determine server URL from environment variables or request headers
+    // Priority: NEXT_PUBLIC_APP_URL > RAILWAY_PUBLIC_DOMAIN > VERCEL_URL > request host
+    let serverUrl: string;
+    
+    if (process.env.NEXT_PUBLIC_APP_URL) {
+      serverUrl = process.env.NEXT_PUBLIC_APP_URL;
+    } else if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      // Railway provides RAILWAY_PUBLIC_DOMAIN (e.g., "op152-production.up.railway.app")
+      serverUrl = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+    } else if (process.env.VERCEL_URL) {
+      serverUrl = `https://${process.env.VERCEL_URL}`;
+    } else {
+      // Fallback to request host (works in most deployments)
+      const protocol = req.headers.get('x-forwarded-proto') || 'https';
+      const host = req.headers.get('host') || 'localhost:3000';
+      serverUrl = `${protocol}://${host}`;
+    }
+    
+    // Ensure URL doesn't have trailing slash
+    serverUrl = serverUrl.replace(/\/$/, '');
+    
+    // Validate serverUrl is not undefined or empty
+    if (!serverUrl || serverUrl === 'undefined' || serverUrl.includes('undefined')) {
+      logger.error('Failed to determine server URL', {
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+        RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN,
+        VERCEL_URL: process.env.VERCEL_URL,
+        host: req.headers.get('host'),
+      });
+      return NextResponse.json(
+        { 
+          error: 'Server URL not configured',
+          message: 'Please set NEXT_PUBLIC_APP_URL environment variable or ensure RAILWAY_PUBLIC_DOMAIN is available.',
+        },
+        { status: 500 }
+      );
+    }
+    
     // Generate connection token
     const token = generateConnectionToken(userId);
-
+    
     // Check if bridge is already connected
     const bridgeManager = getBridgeManager();
     const isAlreadyConnected = bridgeManager.isConnected(userId);
-
+    
     logger.info('Local environment connection details', {
       userId,
       serverUrl,
       isAlreadyConnected,
+      envVars: {
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ? 'set' : 'not set',
+        RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN ? 'set' : 'not set',
+        VERCEL_URL: process.env.VERCEL_URL ? 'set' : 'not set',
+      },
     });
 
     return NextResponse.json({
