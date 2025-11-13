@@ -607,14 +607,24 @@ export class GeminiClient {
             }
           }
 
-          // Extract text content
+          // Extract text content from all parts
           let text = "";
           if (chunk.text) {
             text = chunk.text;
           } else if ((chunk as any).candidates && (chunk as any).candidates[0]) {
             const candidate = (chunk as any).candidates[0];
-            if (candidate.content?.parts?.[0]?.text) {
-              text = candidate.content.parts[0].text;
+            if (candidate.content?.parts) {
+              // Extract text from all text parts (ignore thoughtSignature and functionCall parts)
+              const textParts: string[] = [];
+              for (const part of candidate.content.parts) {
+                if (part.text) {
+                  textParts.push(part.text);
+                }
+                // Note: thoughtSignature and functionCall parts are handled separately
+                // thoughtSignature is internal reasoning we can ignore
+                // functionCall is handled above in the functionCalls check
+              }
+              text = textParts.join("");
             }
           }
 
