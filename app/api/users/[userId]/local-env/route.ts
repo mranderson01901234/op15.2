@@ -69,7 +69,7 @@ export async function POST(
     
     // Validate serverUrl is not undefined or empty
     if (!serverUrl || serverUrl === 'undefined' || serverUrl.includes('undefined')) {
-      logger.error('Failed to determine server URL', {
+      logger.error('Failed to determine server URL', undefined, {
         NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
         RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN,
         VERCEL_URL: process.env.VERCEL_URL,
