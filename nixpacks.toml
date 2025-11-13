@@ -12,5 +12,5 @@ cmds = [
 ]
 
 [start]
-cmd = "sh -c 'export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm start'"
+cmd = "NODE_ENV=production node server.js"
 
