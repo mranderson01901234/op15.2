@@ -3612,7 +3612,6 @@ export default function Home() {
                                     textAlign: "left",
                                     wordBreak: "normal",
                                     overflowWrap: "normal",
-                                    textWrap: "normal",
                                   } as React.CSSProperties}
                                 >
                                   {part.content && part.content.trim().length > 0 ? formatMessageContent(
@@ -3673,7 +3672,6 @@ export default function Home() {
                             textAlign: message.role === "user" ? "left" : "left",
                             wordBreak: message.role === "user" ? "break-word" : "normal",
                             overflowWrap: message.role === "user" ? "break-word" : "normal",
-                            textWrap: message.role === "user" ? "balance" : "normal",
                           } as React.CSSProperties}
                         >
                           {message.content && message.content.trim().length > 0 ? formatMessageContent(
