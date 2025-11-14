@@ -428,11 +428,13 @@ export class GeminiClient {
    * @param messages - Conversation messages
    * @param onFunctionCall - Callback for function calls
    * @param fileSearchStoreNames - Optional array of File Search store names to use
+   * @param workspaceRoot - Current workspace root directory (injected into system prompt)
    */
   async *streamChat(
     messages: Message[],
     onFunctionCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>,
-    fileSearchStoreNames?: string[]
+    fileSearchStoreNames?: string[],
+    workspaceRoot?: string
   ): AsyncGenerator<StreamChunk> {
     const MAX_RETRIES = 3;
     const INITIAL_RETRY_DELAY = 1000; // 1 second
@@ -452,10 +454,35 @@ export class GeminiClient {
         }>;
       }> = [];
 
+      // Build dynamic system prompt with current workspace root
+      // CRITICAL: Put workspace root at the VERY TOP so it takes precedence over everything
+      let dynamicSystemPrompt = SYSTEM_PROMPT;
+      if (workspaceRoot) {
+        // Inject current workspace root at the TOP of system prompt with maximum prominence
+        dynamicSystemPrompt = `⚠️ CRITICAL: CURRENT WORKSPACE ROOT ⚠️
+
+The workspace root has been set to: ${workspaceRoot}
+
+THIS IS THE CURRENT WORKING DIRECTORY FOR ALL COMMANDS AND OPERATIONS.
+
+IMPORTANT RULES:
+1. When answering "which directory are we in" or similar questions, ALWAYS answer with: ${workspaceRoot}
+2. When executing commands via exec.run, they run in ${workspaceRoot} by default (unless cwd is specified)
+3. When resolving relative paths, they are resolved relative to ${workspaceRoot}
+4. IGNORE any previous directory information from earlier messages in this conversation
+5. The workspace root may have changed since earlier messages - ALWAYS use the current value shown above
+
+If the user asks about the current directory, respond with "${workspaceRoot}" immediately, without checking conversation history.
+
+---
+
+${SYSTEM_PROMPT}`;
+      }
+
       // Add system prompt
       conversationHistory.push({
         role: "user",
-        parts: [{ text: SYSTEM_PROMPT }],
+        parts: [{ text: dynamicSystemPrompt }],
       });
 
       // Add conversation messages (both user and assistant)
@@ -551,7 +578,7 @@ export class GeminiClient {
           temperature: 0.2,
           topP: 0.9,
           maxOutputTokens: 2048,
-          systemInstruction: [{ text: SYSTEM_PROMPT }],
+          systemInstruction: [{ text: dynamicSystemPrompt }],
           tools,
         };
 

@@ -81,11 +81,14 @@ export async function handleExecRun(
   }
 
   // Server-side fallback (direct execution)
+  // Use workspaceRoot from context as default cwd if not specified
+  const cwd = args.cwd || context.workspaceRoot;
+  
   const result = await executor.execute(
     args.command,
     context,
     {
-      cwd: args.cwd,
+      cwd,
       timeoutMs: args.timeoutMs,
     }
   );

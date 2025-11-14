@@ -1,6 +1,7 @@
 /**
- * Bridge Manager - Manages WebSocket connections to user browsers
- * Handles routing tool calls from cloud server to browser File System API
+ * Bridge Manager - Manages WebSocket connections to local agents
+ * Handles routing tool calls from cloud server to local Node.js agents
+ * Note: Browser bridge support has been removed - only agents are supported
  */
 
 import { logger } from '@/lib/utils/logger';
@@ -27,10 +28,10 @@ export class BridgeManager {
   private requestTimeout = 30000; // 30 seconds
 
   /**
-   * Connect a browser bridge WebSocket
+   * Connect an agent WebSocket (legacy method - agents are handled in server.js)
    */
   connectBridge(userId: string, ws: NodeWebSocket): void {
-    logger.info('Browser bridge connected', { userId });
+    logger.info('Agent connected (via legacy method)', { userId });
 
     // Store connection
     this.bridges.set(userId, ws);
@@ -51,21 +52,21 @@ export class BridgeManager {
 
     // Handle disconnection
     ws.on('close', () => {
-      logger.info('Browser bridge disconnected', { userId });
+      logger.info('Agent disconnected (via legacy method)', { userId });
       this.bridges.delete(userId);
       // Clean up pending requests
       this.cleanupPendingRequests(userId);
     });
 
     ws.on('error', (error) => {
-      logger.error('Browser bridge error', error instanceof Error ? error : undefined, { userId });
+      logger.error('Agent error (via legacy method)', error instanceof Error ? error : undefined, { userId });
       this.bridges.delete(userId);
       this.cleanupPendingRequests(userId);
     });
   }
 
   /**
-   * Check if user has an active bridge connection
+   * Check if user has an active agent connection
    */
   isConnected(userId: string): boolean {
     const bridge = this.bridges.get(userId);
@@ -73,7 +74,7 @@ export class BridgeManager {
   }
 
   /**
-   * Request operation from browser bridge
+   * Request operation from agent (legacy method - uses global bridge manager from server.js)
    */
   async requestBrowserOperation(
     userId: string,
@@ -83,11 +84,11 @@ export class BridgeManager {
     const bridge = this.bridges.get(userId);
     
     if (!bridge) {
-      throw new Error(`Browser bridge not connected for user ${userId}`);
+      throw new Error(`Agent not connected for user ${userId}`);
     }
 
     if (bridge.readyState !== 1) { // WebSocket.OPEN
-      throw new Error(`Browser bridge not ready for user ${userId}`);
+      throw new Error(`Agent not ready for user ${userId}`);
     }
 
     const requestId = this.generateRequestId(userId);
@@ -119,7 +120,7 @@ export class BridgeManager {
   }
 
   /**
-   * Handle response from browser bridge
+   * Handle response from agent
    */
   private async handleBridgeResponse(userId: string, response: BridgeResponse): Promise<void> {
     const { id, data, error } = response;
@@ -162,7 +163,7 @@ export class BridgeManager {
   }
 
   /**
-   * Disconnect user bridge
+   * Disconnect user agent
    */
   disconnectBridge(userId: string): void {
     const bridge = this.bridges.get(userId);
