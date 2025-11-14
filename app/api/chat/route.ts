@@ -3,13 +3,12 @@ import { z } from "zod";
 import path from "path";
 import { GeminiClient } from "@/lib/llm/gemini";
 import { executeTool } from "@/lib/tools/handlers";
-import { getUserContext, type UserContext } from "@/lib/types/user-context";
+import { getUserContext, type UserContext, type RestrictionLevel } from "@/lib/types/user-context";
 import { logger } from "@/lib/utils/logger";
 import { extractPDFReferences, readPDFFromFilesystem } from "@/lib/pdf/utils";
 import type { PDFContent } from "@/lib/pdf/types";
 import { MemoryIndex } from "@/lib/index/memory-index";
 import { auth } from "@clerk/nextjs/server";
-import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
 
 const requestSchema = z.object({
   message: z.string().min(1, "Message is required"),
@@ -50,20 +49,44 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { message, conversationId, fileSearchStoreNames, pdfs: uploadedPDFs, history, editorState, currentMessageImages } = requestSchema.parse(body);
 
-    // Get user context with browser bridge connection status
-    let browserBridgeConnected = false;
+    // Load user workspace configuration
+    // Default: '/' (filesystem root) - universal for all users
+    let workspaceRoot = '/';
+    let restrictionLevel: RestrictionLevel = 'unrestricted';
+    let userHomeDirectory: string | undefined;
+    
     try {
-      const bridgeManager = getBridgeManager();
-      browserBridgeConnected = bridgeManager.isConnected(authenticatedUserId);
+      // Get workspace config - includes user-specific home directory from agent
+      // Use cache: 'no-store' to ensure we always get the latest workspace config
+      const workspaceResponse = await fetch(
+        `${req.nextUrl.origin}/api/users/${authenticatedUserId}/workspace`,
+        {
+          headers: {
+            'Cookie': req.headers.get('cookie') || '',
+          },
+          cache: 'no-store', // Always fetch fresh workspace config
+        }
+      );
+      
+      if (workspaceResponse.ok) {
+        const workspaceConfig = await workspaceResponse.json();
+        workspaceRoot = workspaceConfig.workspaceRoot || '/'; // Default: '/' (universal)
+        restrictionLevel = workspaceConfig.restrictionLevel || 'unrestricted';
+        // userHomeDirectory is fetched fresh from agent each time (user-specific)
+        userHomeDirectory = workspaceConfig.userHomeDirectory;
+      }
     } catch (error) {
-      logger.warn('Failed to check bridge connection status', { error: error instanceof Error ? error.message : String(error) });
-      // Continue without bridge connection - not a fatal error
+      logger.warn('Failed to load workspace config', { error: error instanceof Error ? error.message : String(error) });
+      // Use defaults: '/' root (universal), no restrictions
     }
     
     const context: UserContext = {
       userId: authenticatedUserId,
       workspaceId: undefined,
-      browserBridgeConnected,
+      browserBridgeConnected: false, // Browser bridge removed - only agent is used
+      workspaceRoot,
+      restrictionLevel,
+      userHomeDirectory,
     };
 
     // Get RAG store names from indexed directories (if not explicitly provided)
@@ -82,6 +105,8 @@ export async function POST(req: NextRequest) {
       message: message.substring(0, 100),
       conversationId,
       userId: context.userId,
+      workspaceRoot: context.workspaceRoot,
+      restrictionLevel: context.restrictionLevel,
       hasUploadedPDFs: !!uploadedPDFs?.length,
       ragStoreCount: ragStoreNames?.length || 0,
     });
@@ -127,7 +152,11 @@ export async function POST(req: NextRequest) {
           }> = [];
           
           // Add conversation history if provided
+          // Also check if workspace root has changed since last message
+          let previousWorkspaceRoot: string | undefined;
           if (history && history.length > 0) {
+            // Extract workspace root from last assistant message if it mentioned one
+            // This is a heuristic - we'll also inject a workspace root change message
             for (const msg of history) {
               messages.push({
                 role: msg.role,
@@ -137,10 +166,23 @@ export async function POST(req: NextRequest) {
             }
           }
           
-          // Build current message content - include editor state if file is open
+          // Inject workspace root info into every message so AI always sees current workspace root
+          // This ensures workspace root changes are immediately reflected in the conversation
           let currentMessageContent = message;
-          if (editorState?.isOpen && editorState?.filePath) {
-            currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${message}`;
+          
+          // Prepend workspace root info to current message to ensure AI sees it
+          if (context.workspaceRoot && context.workspaceRoot !== '/') {
+            const workspaceInfo = `[Workspace Root: ${context.workspaceRoot} - All commands execute in this directory]`;
+            if (editorState?.isOpen && editorState?.filePath) {
+              currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${workspaceInfo}\n\n${message}`;
+            } else {
+              currentMessageContent = `${workspaceInfo}\n\n${message}`;
+            }
+          } else {
+            // Build current message content - include editor state if file is open
+            if (editorState?.isOpen && editorState?.filePath) {
+              currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${message}`;
+            }
           }
           
           // Add current message with PDFs and images
@@ -323,7 +365,8 @@ export async function POST(req: NextRequest) {
               
               return result;
             },
-            ragStoreNames
+            ragStoreNames,
+            context.workspaceRoot // Pass current workspace root to inject into system prompt
           )) {
             let data: string;
 

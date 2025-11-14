@@ -1,14 +1,12 @@
 /**
  * Custom Next.js server with WebSocket support
- * Handles both HTTP requests and WebSocket connections for browser bridge
+ * Handles both HTTP requests and WebSocket connections for local agents
  */
 
 const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 
-// Import bridge manager (we'll need to make it work with CommonJS)
-// For now, we'll create a simple bridge manager here
 const { WebSocketServer } = require('ws');
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -19,8 +17,8 @@ const port = parseInt(process.env.PORT || '3000', 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
-// Simple bridge manager for WebSocket connections
-const bridges = new Map();
+// Agent connection manager for WebSocket connections
+const agents = new Map(); // Local Node.js agents - full filesystem access
 const pendingRequests = new Map();
 
 function generateRequestId(userId) {
@@ -39,7 +37,7 @@ app.prepare().then(() => {
     }
   });
 
-  // Create WebSocket server for bridge connections only
+  // Create WebSocket server for agent connections
   const wss = new WebSocketServer({ 
     noServer: true, // Don't auto-handle upgrades, we'll do it manually
   });
@@ -55,8 +53,8 @@ app.prepare().then(() => {
       const pathname = url.pathname;
       
       if (pathname === '/api/bridge') {
-        // Handle bridge WebSocket connections
-        console.log('WebSocket upgrade request for bridge', { 
+        // Handle agent WebSocket connections
+        console.log('WebSocket upgrade request for agent', { 
           url: request.url,
           pathname,
           origin: request.headers.origin,
@@ -67,7 +65,7 @@ app.prepare().then(() => {
             wss.emit('connection', ws, request);
           });
         } catch (error) {
-          console.error('Error handling bridge WebSocket upgrade', { error: error.message });
+          console.error('Error handling agent WebSocket upgrade', { error: error.message });
           socket.destroy();
         }
       } else if (dev && pathname.startsWith('/_next/')) {
@@ -93,12 +91,14 @@ app.prepare().then(() => {
   wss.on('connection', (ws, req) => {
     console.log('WebSocket connection established', { url: req.url });
 
-    // Extract userId from query params
+    // Extract userId and connection type from query params
     let userId;
+    let connectionType;
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
       userId = url.searchParams.get('userId');
-      console.log('Extracted userId from WebSocket connection', { userId, url: req.url });
+      connectionType = url.searchParams.get('type') || 'agent'; // Only 'agent' is supported
+      console.log('Extracted connection info', { userId, connectionType, url: req.url });
     } catch (error) {
       console.error('Failed to parse WebSocket URL', { error, url: req.url });
       ws.close(1008, 'Invalid URL');
@@ -111,10 +111,17 @@ app.prepare().then(() => {
       return;
     }
 
-    console.log('✅ Browser bridge connected successfully', { userId });
+    // Only accept agent connections
+    if (connectionType !== 'agent') {
+      console.warn('WebSocket connection rejected: only agent connections are supported', { userId, connectionType });
+      ws.close(1008, 'Only agent connections are supported');
+      return;
+    }
 
-    // Store connection
-    bridges.set(userId, ws);
+    console.log(`✅ Local agent connected successfully`, { userId });
+
+    // Store agent connection
+    agents.set(userId, ws);
 
     // Set up ping/pong to keep connection alive
     const pingInterval = setInterval(() => {
@@ -141,6 +148,41 @@ app.prepare().then(() => {
         // Handle ping/pong messages (if sent as JSON)
         if (message.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+        
+        // Handle agent metadata (home directory, platform info, filesystem index)
+        if (message.type === 'agent-metadata') {
+          console.log('Received agent metadata', { 
+            userId, 
+            homeDirectory: message.homeDirectory,
+            indexedDirectories: message.filesystemIndex?.mainDirectories?.length || 0,
+            indexedPaths: message.filesystemIndex?.indexedPaths?.length || 0,
+          });
+          
+          // Store agent metadata globally for API routes to access
+          if (!global.agentMetadata) {
+            global.agentMetadata = new Map();
+          }
+          global.agentMetadata.set(userId, {
+            homeDirectory: message.homeDirectory,
+            platform: message.platform,
+            filesystemIndex: message.filesystemIndex || null,
+          });
+          
+          // Store filesystem index separately for quick access
+          if (message.filesystemIndex) {
+            if (!global.filesystemIndexes) {
+              global.filesystemIndexes = new Map();
+            }
+            global.filesystemIndexes.set(userId, {
+              mainDirectories: message.filesystemIndex.mainDirectories,
+              indexedPaths: new Set(message.filesystemIndex.indexedPaths), // Use Set for fast lookup
+              indexedAt: message.filesystemIndex.indexedAt,
+            });
+            console.log(`📁 Cached filesystem index for user ${userId}: ${message.filesystemIndex.indexedPaths.length} paths`);
+          }
+          
           return;
         }
         
@@ -172,8 +214,8 @@ app.prepare().then(() => {
     // Handle disconnection
     ws.on('close', (code, reason) => {
       clearInterval(pingInterval);
-      console.log('Browser bridge disconnected', { userId, code, reason: reason.toString() });
-      bridges.delete(userId);
+      console.log(`Agent disconnected`, { userId, code, reason: reason.toString() });
+      agents.delete(userId);
       // Clean up pending requests
       const requestsToClean = Array.from(pendingRequests.entries())
         .filter(([id]) => id.startsWith(`${userId}-`));
@@ -185,8 +227,8 @@ app.prepare().then(() => {
 
     ws.on('error', (error) => {
       clearInterval(pingInterval);
-      console.error('Browser bridge error', { userId, error: error.message });
-      bridges.delete(userId);
+      console.error(`Agent error`, { userId, error: error.message });
+      agents.delete(userId);
     });
 
     // Send connection confirmation
@@ -201,19 +243,21 @@ app.prepare().then(() => {
   // Expose bridge manager methods globally for use in API routes
   global.bridgeManager = {
     isConnected(userId) {
-      const bridge = bridges.get(userId);
-      return bridge !== undefined && bridge.readyState === 1; // WebSocket.OPEN
+      // Check if agent is connected
+      const agent = agents.get(userId);
+      return agent !== undefined && agent.readyState === 1; // WebSocket.OPEN
     },
 
     async requestBrowserOperation(userId, operation, args = {}) {
-      const bridge = bridges.get(userId);
+      // Request operation from agent
+      const agent = agents.get(userId);
 
-      if (!bridge) {
-        throw new Error(`Browser bridge not connected for user ${userId}`);
+      if (!agent) {
+        throw new Error(`No agent connection available for user ${userId}`);
       }
 
-      if (bridge.readyState !== 1) {
-        throw new Error(`Browser bridge not ready for user ${userId}`);
+      if (agent.readyState !== 1) {
+        throw new Error(`Agent not ready for user ${userId}`);
       }
 
       const requestId = generateRequestId(userId);
@@ -232,8 +276,8 @@ app.prepare().then(() => {
         pendingRequests.set(requestId, { resolve, reject, timeout });
 
         try {
-          bridge.send(JSON.stringify(request));
-          console.log('Sent bridge request', { userId, requestId, operation });
+          agent.send(JSON.stringify(request));
+          console.log(`Sent agent request`, { userId, requestId, operation });
         } catch (error) {
           pendingRequests.delete(requestId);
           clearTimeout(timeout);
@@ -242,21 +286,18 @@ app.prepare().then(() => {
       });
     },
 
-    connectBridge(userId, ws) {
-      // Already handled in connection handler above
-      bridges.set(userId, ws);
-    },
-
     disconnectBridge(userId) {
-      const bridge = bridges.get(userId);
-      if (bridge) {
-        bridge.close();
-        bridges.delete(userId);
+      // Disconnect agent
+      const agent = agents.get(userId);
+      if (agent) {
+        agent.close();
+        agents.delete(userId);
       }
     },
 
     getConnectedUsers() {
-      return Array.from(bridges.keys());
+      // Return all users with agent connections
+      return Array.from(agents.keys());
     },
   };
 
@@ -321,7 +362,7 @@ app.prepare().then(() => {
 
   server.listen(port, () => {
     console.log(`> Ready on http://${hostname}:${port}`);
-    console.log(`> WebSocket bridge available at ws://${hostname}:${port}/api/bridge`);
+    console.log(`> WebSocket agent endpoint available at ws://${hostname}:${port}/api/bridge`);
   });
 });
 

@@ -5,6 +5,7 @@ import type { FileEntry } from "@/lib/types/tool-types";
 import type { UserContext } from "@/lib/types/user-context";
 import { FileSystemError } from "@/lib/utils/errors";
 import { getEnv } from "@/lib/utils/env";
+import { logger } from "@/lib/utils/logger";
 
 /**
  * Local filesystem implementation
@@ -13,8 +14,61 @@ import { getEnv } from "@/lib/utils/env";
  */
 export class LocalFileSystem implements FileSystem {
   private getWorkspaceRoot(context: UserContext): string {
+    // Use user's workspace root if set, otherwise fall back to env or default
+    if (context.workspaceRoot) {
+      return context.workspaceRoot;
+    }
     const env = getEnv();
     return env.WORKSPACE_ROOT || "/";
+  }
+
+  /**
+   * Check filesystem index for cached paths (faster lookup)
+   * Matches directory names like "Desktop" to full paths like "/home/dp/Desktop"
+   */
+  private findInIndex(filePath: string, userId: string, userHomeDirectory?: string): string | null {
+    if (typeof global === 'undefined' || !(global as any).filesystemIndexes) {
+      return null;
+    }
+    
+    const indexData = (global as any).filesystemIndexes.get(userId);
+    if (!indexData) {
+      return null;
+    }
+    
+    const indexedPaths = indexData.indexedPaths as Set<string>;
+    const mainDirectories = indexData.mainDirectories as Array<{ name: string; path: string }>;
+    const normalizedPath = path.normalize(filePath);
+    
+    // Check exact match first
+    if (indexedPaths.has(normalizedPath)) {
+      return normalizedPath;
+    }
+    
+    // Check main directories by name (e.g., "Desktop" -> "/home/dp/Desktop")
+    for (const dir of mainDirectories) {
+      if (dir.name === filePath || dir.name.toLowerCase() === filePath.toLowerCase()) {
+        return dir.path;
+      }
+    }
+    
+    // Check if any indexed path ends with the requested path
+    // e.g., "/home/dp/Desktop" ends with "Desktop"
+    for (const indexedPath of indexedPaths) {
+      const pathParts = indexedPath.split(path.sep);
+      const lastPart = pathParts[pathParts.length - 1];
+      
+      if (lastPart === filePath || lastPart.toLowerCase() === filePath.toLowerCase()) {
+        return indexedPath;
+      }
+      
+      // Also check if path ends with the requested path
+      if (indexedPath.endsWith(path.sep + filePath) || indexedPath.endsWith('/' + filePath)) {
+        return indexedPath;
+      }
+    }
+    
+    return null;
   }
 
   async resolve(filePath: string, context: UserContext): Promise<string> {
@@ -23,10 +77,62 @@ export class LocalFileSystem implements FileSystem {
     
     let resolvedPath: string;
     
+    // Handle tilde expansion (~) - uses user-specific home directory
+    if (filePath.startsWith('~')) {
+      const homeDir = context.userHomeDirectory || process.env.HOME || '/home/user';
+      filePath = filePath.replace('~', homeDir);
+    }
+    
     if (path.isAbsolute(filePath)) {
       resolvedPath = path.normalize(filePath);
     } else {
-      resolvedPath = path.resolve(workspaceRoot, filePath);
+      // For relative paths:
+      // - If workspace root is "/" (unrestricted/universal), resolve relative to user's home directory
+      //   This makes "Desktop" resolve to "/home/dp/Desktop" (user-specific)
+      // - Otherwise, resolve relative to workspace root
+      if (workspaceRoot === '/') {
+        // Workspace root is "/" (universal filesystem access)
+        // Try to resolve relative to user's home directory
+        
+        // First, try to find in cached filesystem index (faster, if agent connected)
+        const indexedPath = context.userHomeDirectory 
+          ? this.findInIndex(filePath, context.userId, context.userHomeDirectory)
+          : null;
+        if (indexedPath) {
+          resolvedPath = indexedPath;
+          logger.debug('Path resolved via index', { filePath, resolvedPath });
+        } else if (context.userHomeDirectory) {
+          // Use user's home directory from agent/context
+          resolvedPath = path.resolve(context.userHomeDirectory, filePath);
+          logger.debug('Path resolved via home directory', { filePath, resolvedPath, homeDir: context.userHomeDirectory });
+        } else {
+          // Fallback: use common home directory locations
+          // This handles cases where agent hasn't connected yet
+          // Note: Without agent, we can't know user's exact home directory
+          // So we try common locations - this may not work for all users
+          const possibleHomes = [
+            process.env.HOME,
+            process.env.USERPROFILE,
+            '/home/' + (process.env.USER || 'user'),
+            '/Users/' + (process.env.USER || 'user'),
+          ].filter(Boolean) as string[];
+          
+          // Use first available home directory (or default)
+          // Actual existence check happens in list() function
+          const homeDir = possibleHomes[0] || '/home/user';
+          resolvedPath = path.resolve(homeDir, filePath);
+          logger.debug('Path resolved via fallback home directory', { 
+            filePath, 
+            resolvedPath, 
+            homeDir,
+            note: 'Agent not connected - using server-side home directory. Connect agent for accurate path resolution.'
+          });
+        }
+      } else {
+        // Workspace root is restricted (home or custom), resolve relative to workspace root
+        resolvedPath = path.resolve(workspaceRoot, filePath);
+        logger.debug('Path resolved via workspace root', { filePath, resolvedPath, workspaceRoot });
+      }
     }
     
     // Normalize both paths for comparison
@@ -64,6 +170,16 @@ export class LocalFileSystem implements FileSystem {
   ): Promise<FileEntry[]> {
     try {
       const resolvedPath = await this.resolve(filePath, context);
+      
+      // Debug logging
+      logger.debug('fs.list path resolution', {
+        originalPath: filePath,
+        resolvedPath,
+        workspaceRoot: this.getWorkspaceRoot(context),
+        userHomeDirectory: context.userHomeDirectory,
+        userId: context.userId,
+      });
+      
       const entries: FileEntry[] = [];
 
       const readDir = async (dirPath: string, currentDepth: number): Promise<void> => {
@@ -116,8 +232,25 @@ export class LocalFileSystem implements FileSystem {
           err
         );
       } else if (errorCode === "ENOENT") {
+        // Try to get resolved path for better error message
+        let resolvedPathInfo = '';
+        try {
+          const resolved = await this.resolve(filePath, context);
+          if (resolved !== filePath) {
+            resolvedPathInfo = ` (resolved to: ${resolved})`;
+          }
+        } catch {
+          // Ignore if resolve fails
+        }
+        
+        // Check if this might be because agent isn't connected
+        const needsAgent = !context.userHomeDirectory && workspaceRoot === '/';
+        const suggestion = needsAgent 
+          ? ' Note: To access your local filesystem, please connect the local agent or browser bridge.'
+          : '';
+        
         throw new FileSystemError(
-          `Directory not found: "${filePath}"`,
+          `Directory not found: "${filePath}"${resolvedPathInfo}.${suggestion}`,
           filePath,
           err
         );

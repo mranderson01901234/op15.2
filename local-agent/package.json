@@ -1,0 +1,27 @@
+{
+  "name": "@op15/local-agent",
+  "version": "1.0.0",
+  "description": "Local agent for op15 - provides full filesystem access without browser restrictions",
+  "main": "dist/index.js",
+  "bin": {
+    "op15-agent": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
+
