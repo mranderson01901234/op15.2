@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, Fragment } from "react";
+import { flushSync } from "react-dom";
 import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play, ChevronDown, ChevronUp } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,11 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
+  toolResponses?: Array<{ name: string; response: unknown; status?: 'success' | 'error' }>;
+  contentParts?: Array<
+    | { type: 'text'; content: string }
+    | { type: 'tool'; name: string; args: Record<string, unknown>; response?: unknown; status?: 'success' | 'error' }
+  >;
   images?: Image[];
   videos?: Video[];
   formattedSearch?: FormattedSearchData;
@@ -161,16 +167,507 @@ function preventOrphanedWords(text: string): string {
   return words.slice(0, -2).join(' ') + ' ' + lastTwoWords;
 }
 
+// Expandable folder row component
+function ExpandableFolderRow({
+  row,
+  headers,
+  rowIdx,
+  keyId,
+  isExpanded,
+  onToggle,
+  children
+}: {
+  row: string[];
+  headers: string[];
+  rowIdx: number;
+  keyId: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode;
+}) {
+  const firstCell = row[0] || '';
+  const isFolder = firstCell.includes('📁');
+  
+  if (!isFolder) {
+    return (
+      <tr
+        key={`row-${rowIdx}`}
+        className="border-b border-border/40 last:border-b-0"
+      >
+        {row.map((cell, cellIdx) => (
+          <td
+            key={`cell-${rowIdx}-${cellIdx}`}
+            className="px-4 py-3 text-[15px] text-foreground/90"
+          >
+            {formatInlineContent(cell.trim())}
+          </td>
+        ))}
+      </tr>
+    );
+  }
+
+  return (
+    <>
+      <tr
+        key={`row-${rowIdx}`}
+        className="border-b border-border/40 last:border-b-0 hover:bg-muted/30 transition-colors cursor-pointer"
+        onClick={onToggle}
+      >
+        {row.map((cell, cellIdx) => (
+          <td
+            key={`cell-${rowIdx}-${cellIdx}`}
+            className="px-4 py-3 text-[15px] text-foreground/90"
+          >
+            <div className="flex items-center gap-2">
+              {cellIdx === 0 && (
+                <ChevronDown 
+                  className={`h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? '' : '-rotate-90'}`}
+                />
+              )}
+              {formatInlineContent(cell.trim())}
+            </div>
+          </td>
+        ))}
+      </tr>
+      {isExpanded && children && (
+        <tr>
+          <td colSpan={headers.length} className="px-4 py-3 bg-muted/20">
+            {children}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Nested directory table component for recursive directory expansion
+function NestedDirectoryTable({
+  directories,
+  parentKeyId,
+  openFile
+}: {
+  directories: string[][];
+  parentKeyId: string;
+  openFile?: (path: string, content: string) => void;
+}) {
+  const [expandedDirs, setExpandedDirs] = useState<Map<number, boolean>>(new Map());
+  const [dirContents, setDirContents] = useState<Map<number, { directories: string[][]; files: string[][]; loading: boolean }>>(new Map());
+
+  const getDirPath = (row: string[]): string | null => {
+    if (row.length > 1 && row[1]) {
+      let path = row[1].trim();
+      path = path.replace(/\*\*/g, '');
+      path = path.replace(/`/g, '');
+      path = path.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+      return path;
+    }
+    return null;
+  };
+
+  const handleDirToggle = async (dirIdx: number, row: string[]) => {
+    const path = getDirPath(row);
+    if (!path) return;
+
+    const isCurrentlyExpanded = expandedDirs.get(dirIdx) || false;
+
+    if (!isCurrentlyExpanded && !dirContents.has(dirIdx)) {
+      setDirContents(prev => {
+        const newMap = new Map(prev);
+        newMap.set(dirIdx, { directories: [], files: [], loading: true });
+        return newMap;
+      });
+
+      try {
+        const response = await fetch("/api/filesystem/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, depth: 0 }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const entries = Array.isArray(data.entries) ? data.entries : [];
+
+          const sorted = entries.sort((a: any, b: any) => {
+            if (a.kind === 'directory' && b.kind !== 'directory') return -1;
+            if (a.kind !== 'directory' && b.kind === 'directory') return 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          const nestedDirs: string[][] = [];
+          const nestedFiles: string[][] = [];
+
+          sorted.forEach((entry: any) => {
+            const name = entry.name || '';
+            const entryPath = entry.path || '';
+
+            let mtime = '-';
+            if (entry.mtime) {
+              const d = new Date(entry.mtime);
+              const now = new Date();
+              const diffMs = now.getTime() - d.getTime();
+              const diffMins = Math.floor(diffMs / 60000);
+              const diffHours = Math.floor(diffMs / 3600000);
+              const diffDays = Math.floor(diffMs / 86400000);
+
+              if (diffMins < 1) mtime = 'Just now';
+              else if (diffMins < 60) mtime = `${diffMins}m ago`;
+              else if (diffHours < 24) mtime = `${diffHours}h ago`;
+              else if (diffDays < 7) mtime = `${diffDays}d ago`;
+              else mtime = d.toLocaleDateString();
+            }
+
+            if (entry.kind === 'directory') {
+              nestedDirs.push([`📁 **${name}**`, entryPath, mtime]);
+            } else {
+              const size = entry.size !== undefined ? formatFileSizeForNested(entry.size) : '-';
+              const ext = name.split('.').pop() || '';
+              const icon = ['js', 'ts', 'jsx', 'tsx'].includes(ext) ? '📄' :
+                          ['json', 'yaml', 'yml'].includes(ext) ? '⚙️' :
+                          ['md', 'txt'].includes(ext) ? '📝' :
+                          ['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext) ? '🖼️' : '📄';
+              nestedFiles.push([`${icon} ${name}`, entryPath, size, mtime]);
+            }
+          });
+
+          setDirContents(prev => {
+            const newMap = new Map(prev);
+            newMap.set(dirIdx, { directories: nestedDirs, files: nestedFiles, loading: false });
+            return newMap;
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load nested directory:", error);
+        setDirContents(prev => {
+          const newMap = new Map(prev);
+          newMap.set(dirIdx, { directories: [], files: [], loading: false });
+          return newMap;
+        });
+      }
+    }
+
+    setExpandedDirs(prev => {
+      const newMap = new Map(prev);
+      newMap.set(dirIdx, !isCurrentlyExpanded);
+      return newMap;
+    });
+  };
+
+  const formatFileSizeForNested = (bytes: number): string => {
+    if (bytes === undefined || bytes === null) return '-';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  return (
+    <div>
+      <div className="text-sm font-semibold text-foreground mb-2">
+        Directories ({directories.length})
+      </div>
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-border/30">
+            <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Name</th>
+            <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Path</th>
+            <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Modified</th>
+          </tr>
+        </thead>
+        <tbody>
+          {directories.map((dirRow, dirIdx) => {
+            const isExpanded = expandedDirs.get(dirIdx) || false;
+            const contents = dirContents.get(dirIdx);
+
+            return (
+              <Fragment key={`nested-dir-${dirIdx}`}>
+                <tr
+                  className="border-b border-border/20 hover:bg-muted/30 transition-colors cursor-pointer"
+                  onClick={() => handleDirToggle(dirIdx, dirRow)}
+                >
+                  {dirRow.map((cell, cellIdx) => (
+                    <td key={`nested-dir-cell-${cellIdx}`} className="px-3 py-2 text-xs text-foreground/80">
+                      <div className="flex items-center gap-2">
+                        {cellIdx === 0 && (
+                          <ChevronDown
+                            className={`h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? '' : '-rotate-90'}`}
+                          />
+                        )}
+                        {formatInlineContent(cell.trim())}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                {isExpanded && contents && (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-2 bg-muted/20">
+                      {contents.loading ? (
+                        <div className="py-2 text-xs text-muted-foreground text-center">
+                          Loading...
+                        </div>
+                      ) : contents.directories.length > 0 || contents.files.length > 0 ? (
+                        <div className="py-2 space-y-3 ml-4 border-l-2 border-border/20 pl-4">
+                          {contents.directories.length > 0 && (
+                            <NestedDirectoryTable
+                              directories={contents.directories}
+                              parentKeyId={`${parentKeyId}-nested-${dirIdx}`}
+                              openFile={openFile}
+                            />
+                          )}
+                          {contents.files.length > 0 && (
+                            <div>
+                              <div className="text-xs font-semibold text-foreground mb-1">
+                                Files ({contents.files.length})
+                              </div>
+                              <table className="w-full border-collapse text-xs">
+                                <thead>
+                                  <tr className="border-b border-border/30">
+                                    <th className="px-2 py-1 text-left text-[10px] font-medium text-muted-foreground">Name</th>
+                                    <th className="px-2 py-1 text-left text-[10px] font-medium text-muted-foreground">Path</th>
+                                    <th className="px-2 py-1 text-left text-[10px] font-medium text-muted-foreground">Size</th>
+                                    <th className="px-2 py-1 text-left text-[10px] font-medium text-muted-foreground">Modified</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {contents.files.map((fileRow, fileIdx) => (
+                                    <ClickableFileRow
+                                      key={`nested-file-${fileIdx}`}
+                                      row={fileRow}
+                                      headers={['Name', 'Path', 'Size', 'Modified']}
+                                      rowIdx={fileIdx}
+                                      keyId={`${parentKeyId}-nested-file-${fileIdx}`}
+                                      onFileClick={async (path: string) => {
+                                        if (!openFile) return;
+                                        try {
+                                          const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+                                          if (response.ok) {
+                                            const data = await response.json();
+                                            openFile(path, data.content || '');
+                                          } else {
+                                            console.error('Failed to read file:', path);
+                                          }
+                                        } catch (error) {
+                                          console.error('Error reading file:', error);
+                                        }
+                                      }}
+                                    />
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="py-2 text-xs text-muted-foreground text-center">
+                          Empty directory
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Clickable file row component for nested tables
+function ClickableFileRow({
+  row,
+  headers,
+  rowIdx,
+  keyId,
+  onFileClick
+}: {
+  row: string[];
+  headers: string[];
+  rowIdx: number;
+  keyId: string;
+  onFileClick: (path: string) => void;
+}) {
+  // Extract path from file row (usually in second column, index 1)
+  const getFilePath = (): string | null => {
+    if (row.length > 1 && row[1]) {
+      let path = row[1].trim();
+      // Strip any markdown formatting
+      path = path.replace(/\*\*/g, '');
+      path = path.replace(/`/g, '');
+      path = path.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+      return path;
+    }
+    return null;
+  };
+
+  const filePath = getFilePath();
+  const isClickable = filePath !== null;
+
+  const handleClick = () => {
+    if (filePath && isClickable) {
+      onFileClick(filePath);
+    }
+  };
+
+  return (
+    <tr
+      key={`file-row-${rowIdx}`}
+      className={`border-b border-border/20 ${isClickable ? 'hover:bg-muted/30 transition-colors cursor-pointer' : ''}`}
+      onClick={isClickable ? handleClick : undefined}
+    >
+      {row.map((cell, cellIdx) => (
+        <td key={`file-cell-${cellIdx}`} className="px-3 py-2 text-xs text-foreground/80">
+          {formatInlineContent(cell.trim())}
+        </td>
+      ))}
+    </tr>
+  );
+}
+
 // Table component for markdown tables
 function MarkdownTable({ 
   headers, 
   rows, 
-  keyId 
+  keyId,
+  openFile
 }: { 
   headers: string[]; 
   rows: string[][]; 
   keyId: string;
+  openFile?: (path: string, content: string) => void;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Map<number, boolean>>(new Map());
+  const [folderContents, setFolderContents] = useState<Map<number, { directories: string[][]; files: string[][]; loading: boolean }>>(new Map());
+  const MAX_INITIAL_ROWS = 5;
+  const hasMoreRows = rows.length > MAX_INITIAL_ROWS;
+  const visibleRows = isExpanded ? rows : rows.slice(0, MAX_INITIAL_ROWS);
+  const remainingCount = rows.length - MAX_INITIAL_ROWS;
+
+  // Check if a row is a folder by looking for 📁 emoji
+  const isFolderRow = (row: string[]): boolean => {
+    const firstCell = row[0] || '';
+    return firstCell.includes('📁');
+  };
+
+  // Extract path from a folder row (usually in second column)
+  const getFolderPath = (row: string[]): string | null => {
+    if (!isFolderRow(row)) return null;
+    // Path is typically in the second column (index 1)
+    if (row.length > 1 && row[1]) {
+      // Strip any markdown formatting (like **bold** or `code`) from the path
+      let path = row[1].trim();
+      path = path.replace(/\*\*/g, ''); // Remove bold markers
+      path = path.replace(/`/g, ''); // Remove code markers
+      path = path.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1'); // Remove markdown links, keep text
+      return path;
+    }
+    return null;
+  };
+
+  const handleFolderToggle = async (rowIdx: number, row: string[]) => {
+    const path = getFolderPath(row);
+    if (!path) return;
+
+    const isCurrentlyExpanded = expandedFolders.get(rowIdx) || false;
+    
+    if (!isCurrentlyExpanded && !folderContents.has(rowIdx)) {
+      // Fetch directory contents
+      setFolderContents(prev => {
+        const newMap = new Map(prev);
+        newMap.set(rowIdx, { directories: [], files: [], loading: true });
+        return newMap;
+      });
+
+      try {
+        const response = await fetch("/api/filesystem/list", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, depth: 0 }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const entries = Array.isArray(data.entries) ? data.entries : [];
+          
+          // Sort: directories first, then files
+          const sorted = entries.sort((a: any, b: any) => {
+            if (a.kind === 'directory' && b.kind !== 'directory') return -1;
+            if (a.kind !== 'directory' && b.kind === 'directory') return 1;
+            return a.name.localeCompare(b.name);
+          });
+
+          const directories: string[][] = [];
+          const files: string[][] = [];
+
+          sorted.forEach((entry: any) => {
+            const name = entry.name || '';
+            const entryPath = entry.path || '';
+            
+            // Format date using relative time format
+            let mtime = '-';
+            if (entry.mtime) {
+              const d = new Date(entry.mtime);
+              const now = new Date();
+              const diffMs = now.getTime() - d.getTime();
+              const diffMins = Math.floor(diffMs / 60000);
+              const diffHours = Math.floor(diffMs / 3600000);
+              const diffDays = Math.floor(diffMs / 86400000);
+              
+              if (diffMins < 1) mtime = 'Just now';
+              else if (diffMins < 60) mtime = `${diffMins}m ago`;
+              else if (diffHours < 24) mtime = `${diffHours}h ago`;
+              else if (diffDays < 7) mtime = `${diffDays}d ago`;
+              else mtime = d.toLocaleDateString();
+            }
+            
+            if (entry.kind === 'directory') {
+              directories.push([`📁 **${name}**`, entryPath, mtime]);
+            } else {
+              const size = entry.size !== undefined ? formatFileSize(entry.size) : '-';
+              const ext = name.split('.').pop() || '';
+              const icon = ['js', 'ts', 'jsx', 'tsx'].includes(ext) ? '📄' :
+                          ['json', 'yaml', 'yml'].includes(ext) ? '⚙️' :
+                          ['md', 'txt'].includes(ext) ? '📝' :
+                          ['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext) ? '🖼️' : '📄';
+              files.push([`${icon} ${name}`, entryPath, size, mtime]);
+            }
+          });
+
+          setFolderContents(prev => {
+            const newMap = new Map(prev);
+            newMap.set(rowIdx, { directories, files, loading: false });
+            return newMap;
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load directory:", error);
+        setFolderContents(prev => {
+          const newMap = new Map(prev);
+          newMap.set(rowIdx, { directories: [], files: [], loading: false });
+          return newMap;
+        });
+      }
+    }
+
+    setExpandedFolders(prev => {
+      const newMap = new Map(prev);
+      newMap.set(rowIdx, !isCurrentlyExpanded);
+      return newMap;
+    });
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === undefined || bytes === null) return '-';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
   return (
     <div className="my-6 overflow-x-auto">
       <table className="w-full border-collapse">
@@ -187,23 +684,109 @@ function MarkdownTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, rowIdx) => (
-            <tr
-              key={`row-${rowIdx}`}
-              className="border-b border-border/40 last:border-b-0"
-            >
-              {row.map((cell, cellIdx) => (
-                <td
-                  key={`cell-${rowIdx}-${cellIdx}`}
-                  className="px-4 py-3 text-[15px] text-foreground/90"
-                >
-                  {formatInlineContent(cell.trim())}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {visibleRows.map((row, rowIdx) => {
+            const isFolder = isFolderRow(row);
+            const isExpandedFolder = expandedFolders.get(rowIdx) || false;
+            const contents = folderContents.get(rowIdx);
+            
+            return (
+              <ExpandableFolderRow
+                key={`row-${rowIdx}`}
+                row={row}
+                headers={headers}
+                rowIdx={rowIdx}
+                keyId={`${keyId}-row-${rowIdx}`}
+                isExpanded={isExpandedFolder}
+                onToggle={() => handleFolderToggle(rowIdx, row)}
+              >
+                {contents?.loading ? (
+                  <div className="py-4 text-sm text-muted-foreground text-center">
+                    Loading...
+                  </div>
+                ) : contents && (contents.directories.length > 0 || contents.files.length > 0) ? (
+                  <div className="py-2 space-y-4">
+                    {contents.directories.length > 0 && (
+                      <NestedDirectoryTable
+                        directories={contents.directories}
+                        parentKeyId={`${keyId}-parent-${rowIdx}`}
+                        openFile={openFile}
+                      />
+                    )}
+                    {contents.files.length > 0 && (
+                      <div>
+                        <div className="text-sm font-semibold text-foreground mb-2">
+                          Files ({contents.files.length})
+                        </div>
+                        <table className="w-full border-collapse text-sm">
+                          <thead>
+                            <tr className="border-b border-border/30">
+                              <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Name</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Path</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Size</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Modified</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {contents.files.map((fileRow, fileIdx) => (
+                              <ClickableFileRow
+                                key={`file-${fileIdx}`}
+                                row={fileRow}
+                                headers={['Name', 'Path', 'Size', 'Modified']}
+                                rowIdx={fileIdx}
+                                keyId={`${keyId}-nested-file-${fileIdx}`}
+                                onFileClick={async (path: string) => {
+                                  if (!openFile) return;
+                                  
+                                  try {
+                                    // Fetch file content
+                                    const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+                                    if (response.ok) {
+                                      const data = await response.json();
+                                      openFile(path, data.content || '');
+                                    } else {
+                                      console.error('Failed to read file:', path);
+                                    }
+                                  } catch (error) {
+                                    console.error('Error reading file:', error);
+                                  }
+                                }}
+                              />
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : contents && !contents.loading ? (
+                  <div className="py-4 text-sm text-muted-foreground text-center">
+                    Empty directory
+                  </div>
+                ) : null}
+              </ExpandableFolderRow>
+            );
+          })}
         </tbody>
       </table>
+      {hasMoreRows && (
+        <div className="mt-3 text-center">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-sm text-primary hover:text-primary/80 underline-offset-2 hover:underline transition-colors flex items-center gap-1 mx-auto"
+          >
+            {isExpanded ? (
+              <>
+                <ChevronUp className="h-4 w-4" />
+                Show less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-4 w-4" />
+                Show {remainingCount} more {remainingCount === 1 ? 'item' : 'items'}
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -312,9 +895,145 @@ function CollapsibleCodeBlock({
   );
 }
 
+// Single tool execution display - clean and technical
+function ToolExecutionStep({
+  name,
+  args,
+  response,
+  status,
+  index
+}: {
+  name: string;
+  args: Record<string, unknown>;
+  response?: unknown;
+  status?: 'success' | 'error';
+  index: number;
+}) {
+
+  // Helper to format tool arguments cleanly
+  const formatArgs = (args: Record<string, unknown>): string => {
+    const relevantArgs: Record<string, unknown> = {};
+
+    // Filter and format based on tool type
+    Object.entries(args).forEach(([key, value]) => {
+      // Skip internal flags and very long values
+      if (key.startsWith('_') || (typeof value === 'string' && value.length > 200)) {
+        return;
+      }
+
+      // For paths, show just the filename or last part
+      if (key === 'path' && typeof value === 'string') {
+        const parts = value.split('/');
+        relevantArgs[key] = parts[parts.length - 1] || value;
+      }
+      // For query, truncate if too long
+      else if (key === 'query' && typeof value === 'string') {
+        relevantArgs[key] = value.length > 60 ? value.substring(0, 60) + '...' : value;
+      }
+      // For command, show as-is
+      else if (key === 'command' && typeof value === 'string') {
+        relevantArgs[key] = value;
+      }
+      // Skip displayResults and other boolean flags unless false
+      else if (typeof value === 'boolean' && value === true) {
+        return;
+      }
+      else {
+        relevantArgs[key] = value;
+      }
+    });
+
+    return Object.entries(relevantArgs)
+      .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
+      .join(' ');
+  };
+
+  // Helper to extract meaningful output from response
+  const formatResponse = (response: unknown, toolName: string): string | null => {
+    if (!response || typeof response !== 'object') return null;
+
+    const resp = response as Record<string, unknown>;
+
+    // For exec.run, show stdout/stderr
+    if (toolName === 'exec.run') {
+      const stdout = resp.stdout as string;
+      const stderr = resp.stderr as string;
+      const exitCode = resp.exitCode as number;
+
+      if (exitCode !== 0 && stderr) {
+        return `Exit code: ${exitCode}\n${stderr}`;
+      }
+      if (stdout && stdout.trim()) {
+        // Truncate if very long
+        return stdout.length > 300 ? stdout.substring(0, 300) + '...' : stdout;
+      }
+    }
+
+    // For fs.write, show success message
+    if (toolName === 'fs.write' && resp.success) {
+      return `File written: ${resp.path}`;
+    }
+
+    // For fs.list, show count
+    if (toolName === 'fs.list' && resp.total) {
+      return `${resp.total} items`;
+    }
+
+    // For brave.search, show result count
+    if (toolName === 'brave.search' && resp.totalResults) {
+      return `${resp.totalResults} results`;
+    }
+
+    // For errors
+    if (resp.error) {
+      return `Error: ${resp.error}`;
+    }
+
+    return null;
+  };
+
+  const output = response ? formatResponse(response, name) : null;
+  const isError = status === 'error';
+  const isComplete = !!response;
+
+  return (
+    <div className="my-3 text-sm">
+      <div className="border border-border/40 rounded bg-muted/20 overflow-hidden">
+        {/* Tool call header */}
+        <div className="px-3 py-2 bg-muted/30 border-b border-border/30 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <span className="text-muted-foreground">[{index}]</span>
+            <span className="font-medium text-foreground">{name}</span>
+            {formatArgs(args) && (
+              <span className="text-muted-foreground/80">{formatArgs(args)}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {isComplete ? (
+              isError ? (
+                <span className="text-xs text-red-400 font-mono">FAILED</span>
+              ) : (
+                <span className="text-xs text-green-400 font-mono">OK</span>
+              )
+            ) : (
+              <span className="text-xs text-yellow-400 font-mono">RUNNING</span>
+            )}
+          </div>
+        </div>
+
+        {/* Tool output */}
+        {output && (
+          <div className="px-3 py-2 font-mono text-xs text-muted-foreground/90 whitespace-pre-wrap">
+            {output}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Format message content with code blocks, headers, and better structure
-function formatMessageContent(content: string): React.ReactElement {
+function formatMessageContent(content: string, openFile?: (path: string, content: string) => void): React.ReactElement {
   const parts: React.ReactElement[] = [];
   let key = 0;
 
@@ -509,6 +1228,7 @@ function formatMessageContent(content: string): React.ReactElement {
                 headers={table.headers}
                 rows={table.rows}
                 keyId={`table-${key-1}`}
+                openFile={openFile}
               />
             );
           }
@@ -1205,6 +1925,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [forceUpdate, setForceUpdate] = useState(0);
   const [attachedPDFs, setAttachedPDFs] = useState<PDFContent[]>([]);
   const [uploadingPDFs, setUploadingPDFs] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -1983,6 +2704,9 @@ export default function Home() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        // Store the chat ID and message ID in variables that won't change
+        const streamChatId = currentChatId;
+        const streamAssistantMessageId = assistantMessageId;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -1999,6 +2723,20 @@ export default function Home() {
               const data = line.slice(6);
 
               if (data === "[DONE]") {
+                // Final update before clearing loading states
+                if (streamChatId) {
+                  flushSync(() => {
+                    updateChatMessages(streamChatId, (prev: Message[]) => {
+                      const updated = prev.map((msg: Message) => {
+                        if (msg.id === streamAssistantMessageId) {
+                          return { ...msg, content: msg.content || '', timestamp: Date.now() };
+                        }
+                        return msg;
+                      });
+                      return [...updated];
+                    });
+                  });
+                }
                 setIsLoading(false);
                 setIsProcessing(false);
                 return;
@@ -2008,61 +2746,122 @@ export default function Home() {
                 const parsed = JSON.parse(data);
 
                 if (parsed.type === "text") {
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
-                      prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
-                          ? { ...msg, content: msg.content + parsed.content }
-                          : msg
-                      )
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
+                      prev.map((msg: Message) => {
+                        if (msg.id === streamAssistantMessageId) {
+                          const newContent = (msg.content || '') + parsed.content;
+                          const parts = [...(msg.contentParts || [])];
+
+                          // If last part is text, create new part with appended content; otherwise create new text part
+                          const lastPart = parts[parts.length - 1];
+                          if (lastPart && lastPart.type === 'text') {
+                            parts[parts.length - 1] = {
+                              ...lastPart,
+                              content: lastPart.content + parsed.content
+                            };
+                          } else {
+                            parts.push({ type: 'text', content: parsed.content });
+                          }
+
+                          return { ...msg, content: newContent, contentParts: parts };
+                        }
+                        return msg;
+                      })
                     );
                   }
                 } else if (parsed.type === "function_call") {
                   console.log("Tool call:", parsed.functionCall);
                   // Store tool call in the message
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
-                      prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
-                          ? {
-                              ...msg,
-                              toolCalls: [
-                                ...(msg.toolCalls || []),
-                                {
-                                  name: parsed.functionCall.name,
-                                  args: parsed.functionCall.args,
-                                },
-                              ],
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
+                      prev.map((msg: Message) => {
+                        if (msg.id === streamAssistantMessageId) {
+                          const newToolCall = {
+                            name: parsed.functionCall.name,
+                            args: parsed.functionCall.args,
+                          };
+                          const parts = [...(msg.contentParts || [])];
+
+                          // Add tool call to contentParts
+                          parts.push({
+                            type: 'tool',
+                            name: parsed.functionCall.name,
+                            args: parsed.functionCall.args,
+                          });
+
+                          return {
+                            ...msg,
+                            toolCalls: [...(msg.toolCalls || []), newToolCall],
+                            contentParts: parts,
+                          };
+                        }
+                        return msg;
+                      })
+                    );
+                  }
+                } else if (parsed.type === "function_response") {
+                  console.log("Tool response:", parsed.functionResponse);
+                  // Store tool response in the message
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
+                      prev.map((msg: Message) => {
+                        if (msg.id === streamAssistantMessageId) {
+                          const newResponse = {
+                            name: parsed.functionResponse.name,
+                            response: parsed.functionResponse.response,
+                            status: parsed.functionResponse.response && typeof parsed.functionResponse.response === 'object' && 'error' in parsed.functionResponse.response ? 'error' : 'success' as 'success' | 'error',
+                          };
+                          const parts = [...(msg.contentParts || [])];
+
+                          // Find the most recent tool call with matching name and update it with response
+                          for (let i = parts.length - 1; i >= 0; i--) {
+                            const part = parts[i];
+                            if (part.type === 'tool' && part.name === parsed.functionResponse.name && !part.response) {
+                              parts[i] = {
+                                ...part,
+                                response: parsed.functionResponse.response,
+                                status: newResponse.status
+                              };
+                              break;
                             }
-                          : msg
-                      )
+                          }
+
+                          return {
+                            ...msg,
+                            toolResponses: [...(msg.toolResponses || []), newResponse],
+                            contentParts: parts,
+                          };
+                        }
+                        return msg;
+                      })
                     );
                   }
                 } else if (parsed.type === "images") {
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
                       prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
+                        msg.id === streamAssistantMessageId
                           ? { ...msg, images: parsed.images }
                           : msg
                       )
                     );
                   }
                 } else if (parsed.type === "videos") {
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
                       prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
+                        msg.id === streamAssistantMessageId
                           ? { ...msg, videos: parsed.videos }
                           : msg
                       )
                     );
                   }
                 } else if (parsed.type === "formatted_search") {
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
                       prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
+                        msg.id === streamAssistantMessageId
                           ? { ...msg, formattedSearch: parsed }
                           : msg
                       )
@@ -2086,10 +2885,10 @@ export default function Home() {
                   if (parsed.imageUrl) {
                     openImage(parsed.imageUrl);
                     // Store the generated image URL in the assistant message for conversation history
-                    if (currentChatId) {
-                      updateChatMessages(currentChatId, (prev: Message[]) =>
+                    if (streamChatId) {
+                      updateChatMessages(streamChatId, (prev: Message[]) =>
                         prev.map((msg: Message) =>
-                          msg.id === assistantMessageId
+                          msg.id === streamAssistantMessageId
                             ? { ...msg, generatedImage: parsed.imageUrl } as any
                             : msg
                         )
@@ -2097,10 +2896,10 @@ export default function Home() {
                     }
                   }
                 } else if (parsed.type === "error") {
-                  if (currentChatId) {
-                    updateChatMessages(currentChatId, (prev: Message[]) =>
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
                       prev.map((msg: Message) =>
-                        msg.id === assistantMessageId
+                        msg.id === streamAssistantMessageId
                           ? { ...msg, content: msg.content + `\n\nError: ${parsed.error}` }
                           : msg
                       )
@@ -2124,16 +2923,19 @@ export default function Home() {
                 if (line.startsWith("data: ")) {
                   const data = line.slice(6);
                   if (data === "[DONE]") {
-                    setIsLoading(false);
-                    setIsProcessing(false);
+                    // Use setTimeout to ensure state updates happen after message updates
+                    setTimeout(() => {
+                      setIsLoading(false);
+                      setIsProcessing(false);
+                    }, 0);
                     return;
                   }
                   try {
                     const parsed = JSON.parse(data);
-                    if (parsed.type === "text" && currentChatId) {
-                      updateChatMessages(currentChatId, (prev: Message[]) =>
+                    if (parsed.type === "text" && streamChatId) {
+                      updateChatMessages(streamChatId, (prev: Message[]) =>
                         prev.map((msg: Message) =>
-                          msg.id === assistantMessageId
+                          msg.id === streamAssistantMessageId
                             ? { ...msg, content: msg.content + parsed.content }
                             : msg
                         )
@@ -2145,9 +2947,49 @@ export default function Home() {
                 }
               }
             }
-            // Always clear loading states when stream ends
-            setIsLoading(false);
-            setIsProcessing(false);
+            // Force a final message update to ensure React re-renders
+            // This ensures the UI updates even if the last chunk was already processed
+            if (streamChatId) {
+              // Get the latest messages to ensure we have the most up-to-date content
+              const latestChat = getActiveChat();
+              const latestMessages = latestChat?.messages || [];
+              const latestMessage = latestMessages.find(m => m.id === streamAssistantMessageId);
+              const finalContent = latestMessage?.content || '';
+              
+              // Force update with final content - create completely new object
+              flushSync(() => {
+                updateChatMessages(streamChatId, (prev: Message[]) => {
+                  const updated = prev.map((msg: Message) => {
+                    if (msg.id === streamAssistantMessageId) {
+                      // Create completely new object with all properties
+                      return { 
+                        ...msg, 
+                        content: finalContent,
+                        timestamp: Date.now(),
+                        // Force React to see this as a new object
+                        _updated: Date.now()
+                      } as Message & { _updated?: number };
+                    }
+                    return msg;
+                  });
+                  // Return completely new array
+                  return [...updated];
+                });
+              });
+              
+              // Force another update cycle to ensure React processes it
+              setTimeout(() => {
+                flushSync(() => {
+                  setIsLoading(false);
+                  setIsProcessing(false);
+                  setForceUpdate(prev => prev + 1); // Force re-render
+                });
+              }, 0);
+            } else {
+              // If no chat ID, just clear loading states
+              setIsLoading(false);
+              setIsProcessing(false);
+            }
             break;
           }
         }
@@ -2280,13 +3122,20 @@ export default function Home() {
               const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
               const hasMedia = (message.images && message.images.length > 0) || (message.videos && message.videos.length > 0);
               const isCurrentlyStreaming = message.role === "assistant" && index === messages.length - 1 && (isLoading || isProcessing);
+              // Check if this message was recently streaming (has timestamp and is the last assistant message)
+              // This ensures messages don't disappear immediately after streaming ends
+              const wasRecentlyStreaming = message.role === "assistant" && 
+                                         index === messages.length - 1 && 
+                                         message.timestamp && 
+                                         (Date.now() - message.timestamp < 1000); // Within last second
 
               const shouldShow = message.role === "user" ||
                                  hasContent ||
                                  message.formattedSearch ||
                                  hasMedia ||
                                  hasToolCalls ||
-                                 isCurrentlyStreaming;
+                                 isCurrentlyStreaming ||
+                                 wasRecentlyStreaming;
 
               if (!shouldShow) return null;
 
@@ -2424,48 +3273,120 @@ export default function Home() {
 
                   {/* Regular content (only show if no formatted search) */}
                   {!message.formattedSearch && (hasContent || (hasToolCalls && message.role === "assistant") || isCurrentlyStreaming || isStreaming) && (
-                    <div className={message.role === "user" ? "space-y-1" : "space-y-2"}>
-                      <div
-                        data-message-id={message.id}
-                        className={`break-words ${
-                          message.role === "user"
-                            ? "text-lg font-medium text-yellow-100 text-left w-full"
-                            : `text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`
-                        }`}
-                        style={{
-                          lineHeight: message.role === "user" ? "1.5" : "1.8",
-                          whiteSpace: message.role === "user" ? "normal" : "pre-wrap",
-                          wordSpacing: "normal",
-                          letterSpacing: message.role === "user" ? "0" : "0.01em",
-                          textAlign: message.role === "user" ? "left" : "left",
-                          wordBreak: message.role === "user" ? "break-word" : "normal",
-                          overflowWrap: message.role === "user" ? "break-word" : "normal",
-                          textWrap: message.role === "user" ? "balance" : "normal",
-                        } as React.CSSProperties}
-                      >
-                        {message.content && message.content.trim().length > 0 ? formatMessageContent(
-                          message.role === "user"
-                            ? preventOrphanedWords(
-                                // Filter out "Imagen 4" or "Imagen" references and generation messages from content
-                                message.content
+                    <div className={message.role === "user" ? "space-y-1" : "space-y-0"}>
+                      {/* Interleaved content and tool execution for assistant messages */}
+                      {message.role === "assistant" && message.contentParts && message.contentParts.length > 0 ? (
+                        <div className="space-y-0">
+                          {(() => {
+                            // Merge adjacent text parts to prevent duplication
+                            const mergedParts: typeof message.contentParts = [];
+                            for (let i = 0; i < message.contentParts.length; i++) {
+                              const part = message.contentParts[i];
+                              if (part.type === 'text') {
+                                // If last merged part is also text, merge them
+                                const lastMerged = mergedParts[mergedParts.length - 1];
+                                if (lastMerged && lastMerged.type === 'text') {
+                                  lastMerged.content += part.content;
+                                } else {
+                                  mergedParts.push({ ...part });
+                                }
+                              } else {
+                                mergedParts.push(part);
+                              }
+                            }
+                            return mergedParts;
+                          })().map((part, partIdx) => {
+                            if (part.type === 'text') {
+                              return (
+                                <div
+                                  key={`text-${partIdx}`}
+                                  data-message-id={`${message.id}-${partIdx}`}
+                                  className={`break-words text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`}
+                                  style={{
+                                    lineHeight: "1.8",
+                                    whiteSpace: "pre-wrap",
+                                    wordSpacing: "normal",
+                                    letterSpacing: "0.01em",
+                                    textAlign: "left",
+                                    wordBreak: "normal",
+                                    overflowWrap: "normal",
+                                    textWrap: "normal",
+                                  } as React.CSSProperties}
+                                >
+                                  {part.content && part.content.trim().length > 0 ? formatMessageContent(
+                                    part.content
+                                      .replace(/\bImagen\s*4\b/gi, '')
+                                      .replace(/\bImagen\b/gi, '')
+                                      .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                      .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                      .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                      .trim(),
+                                    openFile
+                                  ) : null}
+                                </div>
+                              );
+                            } else if (part.type === 'tool') {
+                              // Count how many tools have appeared before this one
+                              const toolIndex = message.contentParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
+                              return (
+                                <ToolExecutionStep
+                                  key={`tool-${partIdx}`}
+                                  name={part.name}
+                                  args={part.args}
+                                  response={part.response}
+                                  status={part.status}
+                                  index={toolIndex}
+                                />
+                              );
+                            }
+                            return null;
+                          })}
+                        </div>
+                      ) : (
+                        /* Fallback for messages without contentParts (user messages or old messages) */
+                        <div
+                          data-message-id={message.id}
+                          className={`break-words ${
+                            message.role === "user"
+                              ? "text-lg font-medium text-yellow-100 text-left w-full"
+                              : `text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`
+                          }`}
+                          style={{
+                            lineHeight: message.role === "user" ? "1.5" : "1.8",
+                            whiteSpace: message.role === "user" ? "normal" : "pre-wrap",
+                            wordSpacing: "normal",
+                            letterSpacing: message.role === "user" ? "0" : "0.01em",
+                            textAlign: message.role === "user" ? "left" : "left",
+                            wordBreak: message.role === "user" ? "break-word" : "normal",
+                            overflowWrap: message.role === "user" ? "break-word" : "normal",
+                            textWrap: message.role === "user" ? "balance" : "normal",
+                          } as React.CSSProperties}
+                        >
+                          {message.content && message.content.trim().length > 0 ? formatMessageContent(
+                            message.role === "user"
+                              ? preventOrphanedWords(
+                                  // Filter out "Imagen 4" or "Imagen" references and generation messages from content
+                                  message.content
+                                    .replace(/\bImagen\s*4\b/gi, '')
+                                    .replace(/\bImagen\b/gi, '')
+                                    .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                    .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                    .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                    .trim()
+                                )
+                              : message.content
                                   .replace(/\bImagen\s*4\b/gi, '')
                                   .replace(/\bImagen\b/gi, '')
                                   .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
                                   .replace(/I've\s+generated\s+\d+\s+image/i, '')
                                   .replace(/Here's?\s+the\s+generated\s+image/i, '')
-                                  .trim()
-                              )
-                            : message.content
-                                .replace(/\bImagen\s*4\b/gi, '')
-                                .replace(/\bImagen\b/gi, '')
-                                .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
-                                .replace(/I've\s+generated\s+\d+\s+image/i, '')
-                                .replace(/Here's?\s+the\s+generated\s+image/i, '')
-                                .trim()
-                        ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
-                          <ProcessingIndicator />
-                        ) : null}
-                      </div>
+                                  .trim(),
+                            openFile
+                          ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
+                            <ProcessingIndicator />
+                          ) : null}
+                        </div>
+                      )}
                       {/* Timestamp - only for assistant, hide while streaming */}
                       {message.role === "assistant" && !isStreaming && (
                         <div className="flex items-center justify-between gap-3 mt-3">
