@@ -111,35 +111,29 @@ export async function handleFsList(
   const directories = sorted.filter(e => e.kind === 'directory');
   const files = sorted.filter(e => e.kind !== 'directory');
 
-  // Build markdown table
-  let output = `## Directory Listing: ${args.path}\n\n`;
-  output += `**Total:** ${directories.length} directories, ${files.length} files\n\n`;
+  // Build combined table with directories and files together
+  let output = '';
 
-  if (directories.length > 0) {
-    output += `### Directories\n\n`;
-    output += `| Name | Path | Modified |\n`;
-    output += `|------|------|----------|\n`;
+  if (sorted.length > 0) {
+    output += `| Name | Path | Type | Size | Modified |\n`;
+    output += `|------|------|------|------|----------|\n`;
+    
+    // Add directories first
     for (const dir of directories) {
-      output += `| 📁 **${dir.name}** | ${dir.path} | ${formatDate(dir.mtime)} |\n`;
+      output += `| 📁 **${dir.name}** | ${dir.path} | Directory | - | ${formatDate(dir.mtime)} |\n`;
     }
-    output += `\n`;
-  }
-
-  if (files.length > 0) {
-    output += `### Files\n\n`;
-    output += `| Name | Path | Size | Modified |\n`;
-    output += `|------|------|------|----------|\n`;
+    
+    // Add files after directories
     for (const file of files) {
       const ext = file.name.split('.').pop() || '';
       const icon = ['js', 'ts', 'jsx', 'tsx'].includes(ext) ? '📄' :
                    ['json', 'yaml', 'yml'].includes(ext) ? '⚙️' :
                    ['md', 'txt'].includes(ext) ? '📝' :
                    ['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext) ? '🖼️' : '📄';
-      output += `| ${icon} ${file.name} | ${file.path} | ${formatFileSize(file.size)} | ${formatDate(file.mtime)} |\n`;
+      output += `| ${icon} ${file.name} | ${file.path} | File | ${formatFileSize(file.size)} | ${formatDate(file.mtime)} |\n`;
     }
-  }
-
-  if (directories.length === 0 && files.length === 0) {
+    output += `\n`;
+  } else {
     output += `*Empty directory*\n`;
   }
 
