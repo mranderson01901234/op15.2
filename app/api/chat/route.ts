@@ -151,11 +151,53 @@ export async function POST(req: NextRequest) {
             images: currentMessageImages,
           });
 
-          for await (const chunk of client.streamChat(
-            messages,
-            async (name, args) => {
-              // Execute tool when LLM calls it
-              const result = await executeTool(name, args, context);
+          let fsListContent: string | null = null;
+          let fsListCalled = false;
+          let chunkCount = 0;
+          let hasError = false;
+          
+          // Check if user is asking to list files
+          const isListFilesRequest = message.toLowerCase().includes('list files') || 
+                                     message.toLowerCase().includes('list files') ||
+                                     message.toLowerCase() === 'list files';
+          
+          logger.info("Starting stream", { 
+            message: message.substring(0, 50), 
+            isListFilesRequest,
+            messageCount: messages.length 
+          });
+          
+          try {
+            for await (const chunk of client.streamChat(
+              messages,
+              async (name, args) => {
+                // Execute tool when LLM calls it
+                const result = await executeTool(name, args, context);
+              
+              // IMMEDIATELY send formatted fs.list content if present
+              if (name === "fs.list" && result && typeof result === "object") {
+                fsListCalled = true;
+                const response = result as { 
+                  _formatted?: boolean;
+                  content?: string;
+                  directories?: number;
+                  files?: number;
+                  total?: number;
+                };
+                
+                if (response._formatted && response.content) {
+                  const content = response.content;
+                  fsListContent = content;
+                  logger.info("Sending formatted fs.list content IMMEDIATELY", { 
+                    contentLength: content.length 
+                  });
+                  const formattedContent = `data: ${JSON.stringify({
+                    type: "text",
+                    content: content,
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(formattedContent));
+                }
+              }
               
               // Check if this is an editor.open tool response
               if (result && typeof result === "object" && "_editorOpen" in result && result._editorOpen === true) {
@@ -339,25 +381,8 @@ export async function POST(req: NextRequest) {
                 }
               }
               
-              // Check if this is an fs.list response with formatted content
-              if (functionResponse.name === "fs.list" && functionResponse.response && typeof functionResponse.response === "object") {
-                const response = functionResponse.response as { 
-                  _formatted?: boolean;
-                  content?: string;
-                  directories?: number;
-                  files?: number;
-                  total?: number;
-                };
-                
-                // If it's formatted, send the content as text so it appears in the response
-                if (response._formatted && response.content) {
-                  const formattedContent = `data: ${JSON.stringify({
-                    type: "text",
-                    content: response.content,
-                  })}\n\n`;
-                  controller.enqueue(encoder.encode(formattedContent));
-                }
-              }
+              // Note: fs.list formatted content is already sent immediately when tool executes (above)
+              // No need to send it again here
               
               data = `data: ${JSON.stringify({
                 type: "function_response",
@@ -365,13 +390,79 @@ export async function POST(req: NextRequest) {
               })}\n\n`;
             } else {
               // Error
+              hasError = true;
+              const errorMsg = (chunk as any).error || "Unknown error";
+              logger.error("Stream chunk error", errorMsg instanceof Error ? errorMsg : new Error(String(errorMsg)));
               data = `data: ${JSON.stringify({
                 type: "error",
-                error: chunk.error,
+                error: errorMsg,
               })}\n\n`;
             }
 
+            chunkCount++;
             controller.enqueue(encoder.encode(data));
+          }
+          } catch (streamError) {
+            logger.error("Error in stream loop", streamError instanceof Error ? streamError : undefined);
+            hasError = true;
+            const errorData = `data: ${JSON.stringify({
+              type: "error",
+              error: streamError instanceof Error ? streamError.message : "Stream error",
+            })}\n\n`;
+            controller.enqueue(encoder.encode(errorData));
+          }
+          
+          logger.info("Stream completed", { 
+            chunkCount, 
+            fsListCalled, 
+            hasError,
+            isListFilesRequest 
+          });
+          
+          // If it was a "list files" request but no tool was called, force it
+          if (isListFilesRequest && !fsListCalled && !hasError) {
+            logger.warn("List files request but no tool called - forcing fs.list");
+            try {
+              const result = await executeTool("fs.list", { path: "." }, context);
+              if (result && typeof result === "object") {
+                const response = result as { 
+                  _formatted?: boolean;
+                  content?: string;
+                };
+                if (response._formatted && response.content) {
+                  const formattedContent = `data: ${JSON.stringify({
+                    type: "text",
+                    content: response.content,
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(formattedContent));
+                  
+                  // Also send function call/response for consistency
+                  const functionCallData = `data: ${JSON.stringify({
+                    type: "function_call",
+                    functionCall: { name: "fs.list", args: { path: "." } },
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(functionCallData));
+                  
+                  const functionResponseData = `data: ${JSON.stringify({
+                    type: "function_response",
+                    functionResponse: { id: "forced-call", name: "fs.list", response: result },
+                  })}\n\n`;
+                  controller.enqueue(encoder.encode(functionResponseData));
+                }
+              }
+            } catch (toolError) {
+              logger.error("Error forcing fs.list", toolError instanceof Error ? toolError : undefined);
+            }
+          }
+
+          // If fs.list was called but formatted content wasn't sent (shouldn't happen, but safety check)
+          if (fsListCalled && fsListContent) {
+            logger.warn("fs.list was called but formatted content may not have been sent, sending now");
+            const formattedContent = `data: ${JSON.stringify({
+              type: "text",
+              content: fsListContent,
+            })}\n\n`;
+            controller.enqueue(encoder.encode(formattedContent));
           }
 
           // Send completion marker
@@ -392,8 +483,9 @@ export async function POST(req: NextRequest) {
     return new NextResponse(stream, {
       headers: {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no", // Disable nginx buffering
       },
     });
   } catch (error) {

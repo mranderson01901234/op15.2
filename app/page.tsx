@@ -2795,7 +2795,11 @@ export default function Home() {
   // Register send message handler (only recreate when stable dependencies change)
   useEffect(() => {
     setSendMessageHandler(async (text: string) => {
-      if (!text.trim() || isLoadingRef.current) return;
+      console.log("sendMessageHandler called", { text, isLoading: isLoadingRef.current });
+      if (!text.trim() || isLoadingRef.current) {
+        console.log("Blocked from sending:", { isEmpty: !text.trim(), isLoading: isLoadingRef.current });
+        return;
+      }
 
       // Ensure we have an active chat
       let currentChatId = activeChatIdRef.current;
@@ -2819,6 +2823,7 @@ export default function Home() {
       
       // Store user query for potential search summary
       const assistantMessageId = `assistant-${Date.now()}`;
+      console.log("Creating new assistant message", { assistantMessageId, text });
       const messagesWithAssistant = [
         ...updatedMessages,
         { id: assistantMessageId, role: "assistant" as const, content: "", userQuery: text, timestamp: Date.now() },
@@ -2890,12 +2895,20 @@ export default function Home() {
         // Store the chat ID and message ID in variables that won't change
         const streamChatId = currentChatId;
         const streamAssistantMessageId = assistantMessageId;
+        console.log("Starting stream", { streamChatId, streamAssistantMessageId, userInput });
 
         while (true) {
           const { done, value } = await reader.read();
           
-          if (!done && value) {
-            buffer += decoder.decode(value, { stream: true });
+          if (done) {
+            console.log("Stream done", { streamAssistantMessageId });
+            break;
+          }
+          
+          if (value) {
+            const decoded = decoder.decode(value, { stream: true });
+            buffer += decoded;
+            console.log("Received stream chunk", { length: decoded.length, bufferLength: buffer.length });
           }
           
           const lines = buffer.split("\n");
@@ -2904,6 +2917,7 @@ export default function Home() {
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               const data = line.slice(6);
+              console.log("Processing SSE line", { data: data.substring(0, 100) });
 
               if (data === "[DONE]") {
                 // Final update before clearing loading states
@@ -2929,29 +2943,43 @@ export default function Home() {
                 const parsed = JSON.parse(data);
 
                 if (parsed.type === "text") {
+                  console.log("Received text chunk:", { 
+                    length: parsed.content?.length, 
+                    preview: parsed.content?.substring(0, 100),
+                    streamAssistantMessageId
+                  });
                   if (streamChatId) {
-                    updateChatMessages(streamChatId, (prev: Message[]) =>
-                      prev.map((msg: Message) => {
-                        if (msg.id === streamAssistantMessageId) {
-                          const newContent = (msg.content || '') + parsed.content;
-                          const parts = [...(msg.contentParts || [])];
+                    flushSync(() => {
+                      updateChatMessages(streamChatId, (prev: Message[]) => {
+                        const found = prev.find(m => m.id === streamAssistantMessageId);
+                        console.log("Updating messages", { 
+                          streamAssistantMessageId,
+                          found: !!found,
+                          totalMessages: prev.length,
+                          lastMessageId: prev[prev.length - 1]?.id
+                        });
+                        return prev.map((msg: Message) => {
+                          if (msg.id === streamAssistantMessageId) {
+                            const newContent = (msg.content || '') + parsed.content;
+                            const parts = [...(msg.contentParts || [])];
 
-                          // If last part is text, create new part with appended content; otherwise create new text part
-                          const lastPart = parts[parts.length - 1];
-                          if (lastPart && lastPart.type === 'text') {
-                            parts[parts.length - 1] = {
-                              ...lastPart,
-                              content: lastPart.content + parsed.content
-                            };
-                          } else {
-                            parts.push({ type: 'text', content: parsed.content });
+                            // If last part is text, create new part with appended content; otherwise create new text part
+                            const lastPart = parts[parts.length - 1];
+                            if (lastPart && lastPart.type === 'text') {
+                              parts[parts.length - 1] = {
+                                ...lastPart,
+                                content: lastPart.content + parsed.content
+                              };
+                            } else {
+                              parts.push({ type: 'text', content: parsed.content });
+                            }
+
+                            return { ...msg, content: newContent, contentParts: parts };
                           }
-
-                          return { ...msg, content: newContent, contentParts: parts };
-                        }
-                        return msg;
-                      })
-                    );
+                          return msg;
+                        });
+                      });
+                    });
                   }
                 } else if (parsed.type === "function_call") {
                   console.log("Tool call:", parsed.functionCall);
