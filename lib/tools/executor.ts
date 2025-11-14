@@ -3,41 +3,15 @@ import type { ToolExecutor } from "./interface";
 import type { UserContext } from "@/lib/types/user-context";
 import { ExecutionError } from "@/lib/utils/errors";
 import { getEnv } from "@/lib/utils/env";
+import { validateCommand } from "./command-validator";
+import { logger } from "@/lib/utils/logger";
 
 /**
- * Simple tool executor implementation
- * Executes commands directly on the server
- * Later: Swap with SandboxedToolExecutor for Docker-based isolation
+ * Simple tool executor implementation with command validation
+ * Uses whitelist-based validation and runs commands without shell
+ * TODO: Upgrade to Docker-based sandboxing for production
  */
 export class SimpleToolExecutor implements ToolExecutor {
-  /**
-   * Sanitize command to prevent injection attacks
-   */
-  private sanitizeCommand(command: string): string {
-    // Remove dangerous command chaining characters
-    const dangerous = [';', '&&', '||', '|', '`', '$', '<', '>', '\n', '\r'];
-    let sanitized = command;
-    
-    for (const char of dangerous) {
-      if (sanitized.includes(char)) {
-        throw new ExecutionError(
-          `Command contains potentially dangerous character: ${char === '\n' ? 'newline' : char === '\r' ? 'carriage return' : char}`,
-          command
-        );
-      }
-    }
-    
-    // Prevent command substitution attempts
-    if (sanitized.includes('$(') || sanitized.includes('${')) {
-      throw new ExecutionError(
-        'Command contains command substitution syntax',
-        command
-      );
-    }
-    
-    return sanitized;
-  }
-
   async execute(
     command: string,
     context: UserContext,
@@ -51,24 +25,38 @@ export class SimpleToolExecutor implements ToolExecutor {
     stdout: string;
     stderr: string;
   }> {
-    // Sanitize command before execution
-    const sanitizedCommand = this.sanitizeCommand(command);
-    
+    // Validate command against whitelist and extract command + args
+    const { command: cmd, args } = validateCommand(command, context.userId);
+
     const env = getEnv();
-    // Default to "/" (filesystem root) instead of process.cwd() to work with any directory
-    const cwd = options?.cwd || env.WORKSPACE_ROOT || "/";
+    // Default to workspace root, fallback to process.cwd()
+    const cwd = options?.cwd || env.WORKSPACE_ROOT || process.cwd();
     const timeoutMs = options?.timeoutMs || 60000;
 
+    // Log command execution for audit trail
+    logger.info('Executing command', {
+      userId: context.userId,
+      command: cmd,
+      argCount: args.length,
+      cwd,
+      timeout: timeoutMs,
+    });
+
     return new Promise((resolve, reject) => {
-      const [cmd, ...args] = sanitizedCommand.split(/\s+/);
       let stdout = "";
       let stderr = "";
       let timeoutId: NodeJS.Timeout | null = null;
 
+      // SECURITY: Use shell: false to prevent command injection
+      // Commands are executed directly without shell interpretation
       const child = spawn(cmd, args, {
         cwd,
-        shell: true,
+        shell: false, // CRITICAL: Prevents shell injection attacks
         stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          PATH: process.env.PATH, // Ensure command can be found
+        },
       });
 
       child.stdout?.on("data", (data: Buffer) => {

@@ -48,10 +48,55 @@ describe('Security Tests', () => {
     });
   });
 
-  describe('Command Injection Protection', () => {
-    it('should sanitize command execution (TODO)', async () => {
-      // Will implement after command sandboxing is added
-      expect(true).toBe(true);
+  describe('Command Execution Sandboxing', () => {
+    it('should allow whitelisted commands', async () => {
+      const { validateCommand } = await import('@/lib/tools/command-validator');
+
+      const testUserId = 'test-user';
+
+      // These should succeed
+      expect(() => validateCommand('ls -la', testUserId)).not.toThrow();
+      expect(() => validateCommand('git status', testUserId)).not.toThrow();
+      expect(() => validateCommand('echo hello', testUserId)).not.toThrow();
+      expect(() => validateCommand('npm --version', testUserId)).not.toThrow();
+    });
+
+    it('should block dangerous commands', async () => {
+      const { validateCommand } = await import('@/lib/tools/command-validator');
+
+      const testUserId = 'test-user';
+
+      // These should fail
+      expect(() => validateCommand('rm -rf /', testUserId)).toThrow(/not allowed/i);
+      expect(() => validateCommand('curl https://evil.com', testUserId)).toThrow(/not allowed/i);
+      expect(() => validateCommand('wget malware.sh', testUserId)).toThrow(/not allowed/i);
+      expect(() => validateCommand('sudo rm', testUserId)).toThrow(/not allowed/i);
+    });
+
+    it('should block command injection attempts', async () => {
+      const { validateCommand } = await import('@/lib/tools/command-validator');
+
+      const testUserId = 'test-user';
+
+      // These should fail
+      expect(() => validateCommand('ls; rm -rf /', testUserId)).toThrow(/dangerous character/i);
+      expect(() => validateCommand('ls && rm file', testUserId)).toThrow(/dangerous character/i);
+      expect(() => validateCommand('ls | grep test', testUserId)).toThrow(/dangerous character/i);
+      expect(() => validateCommand('$(malicious command)', testUserId)).toThrow(/dangerous character/i);
+    });
+
+    it('should block unsafe git commands', async () => {
+      const { validateCommand } = await import('@/lib/tools/command-validator');
+
+      const testUserId = 'test-user';
+
+      // Safe git commands should work
+      expect(() => validateCommand('git status', testUserId)).not.toThrow();
+      expect(() => validateCommand('git log', testUserId)).not.toThrow();
+
+      // Unsafe git commands should be blocked
+      expect(() => validateCommand('git push', testUserId)).toThrow(/not allowed/i);
+      expect(() => validateCommand('git config', testUserId)).toThrow(/not allowed/i);
     });
   });
 
