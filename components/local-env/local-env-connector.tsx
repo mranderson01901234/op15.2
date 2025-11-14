@@ -20,15 +20,16 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-3 py-2">
       {/* Workspace Root Selector */}
-      <WorkspaceSelector />
+      <div className="border-b border-border pb-3">
+        <WorkspaceSelector />
+      </div>
       
-      <div className="h-px bg-border my-1" />
-      
-      {/* Agent Auto-Installer - Preferred method for local filesystem access */}
-      <AgentAutoInstaller />
+      {/* Agent Auto-Installer */}
+      <div>
+        <AgentAutoInstaller />
+      </div>
     </div>
   );
 }
-

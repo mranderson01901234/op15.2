@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
-import { Download, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Download, CheckCircle, AlertCircle, Loader2, Terminal, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AgentAutoInstaller() {
   const { user, isLoaded } = useUser();
   const [isInstalling, setIsInstalling] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<string>("");
+  const [checkingStatus, setCheckingStatus] = useState(true);
 
   useEffect(() => {
     // Detect platform
@@ -24,22 +26,38 @@ export function AgentAutoInstaller() {
         setPlatform("linux");
       }
 
-      // Check if agent is already installed
+      // Check if agent is already installed and connected
       checkAgentStatus();
     }
-  }, []);
+  }, [user]);
 
   const checkAgentStatus = async () => {
-    // Check if agent is running by trying to detect it
-    // This is a simple check - in production, you'd ping the server
+    if (!user) return;
+    
+    setCheckingStatus(true);
     try {
-      // You could check localStorage or make an API call
-      const agentInstalled = localStorage.getItem("op15-agent-installed");
-      if (agentInstalled === "true") {
-        setIsInstalled(true);
+      // Check if agent is connected via API
+      const response = await fetch(`/api/users/${user.id}/workspace`);
+      if (response.ok) {
+        const config = await response.json();
+        // If we have userHomeDirectory, agent is likely connected
+        if (config.userHomeDirectory) {
+          setIsInstalled(true);
+          setIsConnected(true);
+        } else {
+          // Check localStorage as fallback
+          const agentInstalled = localStorage.getItem("op15-agent-installed");
+          setIsInstalled(agentInstalled === "true");
+          setIsConnected(false);
+        }
       }
     } catch (err) {
-      // Ignore errors
+      // Check localStorage as fallback
+      const agentInstalled = localStorage.getItem("op15-agent-installed");
+      setIsInstalled(agentInstalled === "true");
+      setIsConnected(false);
+    } finally {
+      setCheckingStatus(false);
     }
   };
 
@@ -96,6 +114,11 @@ export function AgentAutoInstaller() {
           : `Installer downloaded!\n\nRun:\nchmod +x op15-agent-installer.sh\n./op15-agent-installer.sh ${user.id}\n\nThe agent will automatically start and connect to your account.`;
 
       alert(instructions);
+      
+      // Check status after a delay
+      setTimeout(() => {
+        checkAgentStatus();
+      }, 2000);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to download installer"
@@ -111,14 +134,46 @@ export function AgentAutoInstaller() {
 
   return (
     <div className="flex flex-col gap-2 px-3 py-2">
-      <div className="text-xs text-muted-foreground mb-1">
-        Local Agent (Full Filesystem Access)
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-foreground">
+          Local Agent
+        </div>
+        {isConnected && (
+          <div className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+            <span>Connected</span>
+          </div>
+        )}
       </div>
 
-      {isInstalled ? (
-        <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
+      {checkingStatus ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>Checking status...</span>
+        </div>
+      ) : isConnected ? (
+        <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 py-1">
           <CheckCircle className="h-3 w-3" />
           <span>Agent installed and running</span>
+        </div>
+      ) : isInstalled ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-yellow-600 dark:text-yellow-400 py-1">
+            <AlertCircle className="h-3 w-3" />
+            <span>Agent installed but not connected</span>
+          </div>
+          <button
+            onClick={checkAgentStatus}
+            className={cn(
+              "w-full px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs",
+              "bg-muted hover:bg-muted/80 text-foreground",
+              "border border-border",
+              "transition-colors"
+            )}
+          >
+            <Terminal className="h-3 w-3" />
+            <span>Check Connection</span>
+          </button>
         </div>
       ) : (
         <>
@@ -126,10 +181,10 @@ export function AgentAutoInstaller() {
             onClick={handleInstall}
             disabled={isInstalling}
             className={cn(
-              "px-3 py-1.5 flex items-center gap-2 rounded-md text-xs",
-              "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-              "hover:bg-blue-500/20 transition-colors",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
+              "w-full px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs font-medium",
+              "bg-blue-500 text-white hover:bg-blue-600",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+              "transition-colors"
             )}
           >
             {isInstalling ? (
@@ -146,19 +201,17 @@ export function AgentAutoInstaller() {
           </button>
 
           {error && (
-            <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
-              <AlertCircle className="h-3 w-3" />
+            <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 py-1">
+              <XCircle className="h-3 w-3" />
               <span>{error}</span>
             </div>
           )}
 
-          <div className="text-xs text-muted-foreground mt-1">
-            One-click installer for full filesystem access (no browser
-            restrictions)
+          <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            One-click installer for full filesystem access without browser restrictions
           </div>
         </>
       )}
     </div>
   );
 }
-

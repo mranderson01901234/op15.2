@@ -8,7 +8,7 @@ import { auth } from '@clerk/nextjs/server';
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> | { userId: string } }
 ) {
   try {
     // Verify authentication
@@ -17,15 +17,19 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Await params if it's a Promise (Next.js 15+)
+    const resolvedParams = params instanceof Promise ? await params : params;
+    const routeUserId = resolvedParams.userId;
+
     // Verify user ID matches
-    if (params.userId !== authenticatedUserId) {
+    if (routeUserId !== authenticatedUserId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Get filesystem index from global store (set by server.js when agent connects)
     let filesystemIndex = null;
     if (typeof global !== 'undefined' && (global as any).filesystemIndexes) {
-      const indexData = (global as any).filesystemIndexes.get(params.userId);
+      const indexData = (global as any).filesystemIndexes.get(routeUserId);
       if (indexData) {
         filesystemIndex = {
           mainDirectories: indexData.mainDirectories,
