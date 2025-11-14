@@ -56,9 +56,45 @@ describe('Security Tests', () => {
   });
 
   describe('Rate Limiting', () => {
-    it('should enforce rate limits (TODO)', async () => {
-      // Will implement after rate limiting is added
-      expect(true).toBe(true);
+    it('should allow requests within rate limit', async () => {
+      const { checkRateLimit } = await import('@/lib/middleware/rate-limit');
+
+      const testUserId = 'test-user-' + Date.now();
+
+      // First request should succeed
+      const result1 = await checkRateLimit(testUserId, 'chat');
+      expect(result1.success).toBe(true);
+      expect(result1.remaining).toBeLessThan(result1.limit);
+    });
+
+    it('should block requests exceeding rate limit', async () => {
+      const { checkRateLimit, RATE_LIMITS } = await import('@/lib/middleware/rate-limit');
+
+      const testUserId = 'test-user-spam-' + Date.now();
+      const limit = RATE_LIMITS.chat.maxRequests;
+
+      // Make requests up to the limit
+      for (let i = 0; i < limit; i++) {
+        const result = await checkRateLimit(testUserId, 'chat');
+        expect(result.success).toBe(true);
+      }
+
+      // Next request should be blocked
+      const blockedResult = await checkRateLimit(testUserId, 'chat');
+      expect(blockedResult.success).toBe(false);
+      expect(blockedResult.remaining).toBe(0);
+    });
+
+    it('should reset rate limit after time window', async () => {
+      const { checkRateLimit } = await import('@/lib/middleware/rate-limit');
+
+      const testUserId = 'test-user-reset-' + Date.now();
+
+      const result1 = await checkRateLimit(testUserId, 'chat');
+      expect(result1.success).toBe(true);
+
+      const resetTime = result1.reset;
+      expect(resetTime).toBeGreaterThan(Date.now());
     });
   });
 });

@@ -10,6 +10,7 @@ import type { PDFContent } from "@/lib/pdf/types";
 import { MemoryIndex } from "@/lib/index/memory-index";
 import { auth } from "@clerk/nextjs/server";
 import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
+import { checkRateLimit, getClientIp, getRetryAfterSeconds } from "@/lib/middleware/rate-limit";
 
 const requestSchema = z.object({
   message: z.string().min(1, "Message is required"),
@@ -46,6 +47,41 @@ export async function POST(req: NextRequest) {
     if (!authenticatedUserId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Check rate limit (per user)
+    const rateLimit = await checkRateLimit(authenticatedUserId, 'chat');
+    if (!rateLimit.success) {
+      const retryAfter = getRetryAfterSeconds(rateLimit.reset);
+      logger.warn('Rate limit exceeded', {
+        userId: authenticatedUserId,
+        limit: rateLimit.limit,
+        reset: new Date(rateLimit.reset).toISOString(),
+      });
+
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded',
+          message: `Too many requests. Please try again in ${retryAfter} seconds.`,
+          retryAfter,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': retryAfter.toString(),
+            'X-RateLimit-Limit': rateLimit.limit.toString(),
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': new Date(rateLimit.reset).toISOString(),
+          },
+        }
+      );
+    }
+
+    // Add rate limit headers to successful responses
+    const rateLimitHeaders = {
+      'X-RateLimit-Limit': rateLimit.limit.toString(),
+      'X-RateLimit-Remaining': rateLimit.remaining.toString(),
+      'X-RateLimit-Reset': new Date(rateLimit.reset).toISOString(),
+    };
 
     const body = await req.json();
     const { message, conversationId, fileSearchStoreNames, pdfs: uploadedPDFs, history, editorState, currentMessageImages } = requestSchema.parse(body);
