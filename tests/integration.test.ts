@@ -36,7 +36,8 @@ describe('Integration Test - Chat Loop Simulation', () => {
         { path: downloadsPath },
         context
       );
-      expect(Array.isArray(listResult)).toBe(true);
+      expect(listResult).toHaveProperty('_formatted');
+      expect((listResult as any)._formatted).toBe(true);
       console.log('✅ Step 2: fs.list completed');
     } catch {
       // Downloads might not exist, use Documents instead
@@ -46,7 +47,8 @@ describe('Integration Test - Chat Loop Simulation', () => {
         { path: documentsPath },
         context
       );
-      expect(Array.isArray(listResult)).toBe(true);
+      expect(listResult).toHaveProperty('_formatted');
+      expect((listResult as any)._formatted).toBe(true);
       console.log('✅ Step 2: fs.list completed (using Documents)');
     }
 

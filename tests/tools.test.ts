@@ -35,15 +35,18 @@ describe('Tool Tests', () => {
     it('should list files and directories in user home', async () => {
       const homePath = process.env.HOME || '/home/dp';
       const result = await handleFsList({ path: homePath }, context);
-      
-      expect(result).toBeInstanceOf(Array);
-      expect(result.length).toBeGreaterThan(0);
-      
-      // Verify structure
-      const firstEntry = result[0];
-      expect(firstEntry).toHaveProperty('name');
-      expect(firstEntry).toHaveProperty('path');
-      expect(firstEntry).toHaveProperty('kind');
+
+      // Verify formatted response structure
+      expect(result).toHaveProperty('_formatted');
+      expect(result._formatted).toBe(true);
+      expect(result).toHaveProperty('content');
+      expect(result).toHaveProperty('total');
+      expect(result.total).toBeGreaterThan(0);
+
+      // Verify directories and files counts
+      expect(result).toHaveProperty('directories');
+      expect(result).toHaveProperty('files');
+      expect(typeof result.content).toBe('string');
     });
   });
 

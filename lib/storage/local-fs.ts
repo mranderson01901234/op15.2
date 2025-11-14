@@ -14,46 +14,61 @@ import { getEnv } from "@/lib/utils/env";
 export class LocalFileSystem implements FileSystem {
   private getWorkspaceRoot(context: UserContext): string {
     const env = getEnv();
-    return env.WORKSPACE_ROOT || "/";
+    const workspaceRoot = env.WORKSPACE_ROOT;
+
+    // Security: Require explicit workspace root in production
+    if (!workspaceRoot) {
+      // In development/test, default to current working directory (not /)
+      const defaultRoot = process.cwd();
+
+      // Log warning in production
+      if (process.env.NODE_ENV === 'production') {
+        console.warn('⚠️ WORKSPACE_ROOT not set in production - using cwd()');
+      }
+
+      return defaultRoot;
+    }
+
+    return workspaceRoot;
   }
 
   async resolve(filePath: string, context: UserContext): Promise<string> {
     const workspaceRoot = this.getWorkspaceRoot(context);
     const resolvedRoot = path.resolve(workspaceRoot);
-    
+
     let resolvedPath: string;
-    
+
+    // Always resolve relative to workspace root
     if (path.isAbsolute(filePath)) {
+      // For absolute paths, check if they're within workspace
       resolvedPath = path.normalize(filePath);
     } else {
+      // For relative paths, resolve within workspace
       resolvedPath = path.resolve(workspaceRoot, filePath);
     }
-    
+
     // Normalize both paths for comparison
     const normalizedResolved = path.normalize(resolvedPath);
     const normalizedRoot = path.normalize(resolvedRoot);
-    
-    // Prevent path traversal attacks - ensure resolved path is within workspace root
-    // Special case: if workspace root is "/" (filesystem root), allow all absolute paths
-    if (normalizedRoot === "/") {
-      // When root is "/", allow all absolute paths (they're all within filesystem root)
-      if (!path.isAbsolute(normalizedResolved)) {
-        throw new FileSystemError(
-          `Invalid relative path: "${filePath}" - relative paths require a non-root workspace`,
-          filePath
-        );
-      }
-    } else {
-      // For non-root workspaces, check that path is within workspace
-      const rootWithSep = normalizedRoot.endsWith(path.sep) ? normalizedRoot : normalizedRoot + path.sep;
-      if (!normalizedResolved.startsWith(rootWithSep) && normalizedResolved !== normalizedRoot) {
-        throw new FileSystemError(
-          `Path traversal detected: "${filePath}" resolves outside workspace root "${normalizedRoot}"`,
-          filePath
-        );
-      }
+
+    // CRITICAL SECURITY: Always enforce workspace boundaries
+    // No exceptions - even for "/" workspace root
+    const rootWithSep = normalizedRoot.endsWith(path.sep)
+      ? normalizedRoot
+      : normalizedRoot + path.sep;
+
+    // Check if resolved path is within workspace
+    const isWithinWorkspace =
+      normalizedResolved === normalizedRoot ||
+      normalizedResolved.startsWith(rootWithSep);
+
+    if (!isWithinWorkspace) {
+      throw new FileSystemError(
+        `Path traversal blocked: "${filePath}" resolves to "${normalizedResolved}" which is outside workspace root "${normalizedRoot}"`,
+        filePath
+      );
     }
-    
+
     return normalizedResolved;
   }
 
