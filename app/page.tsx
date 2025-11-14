@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, Fragment } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { PDFUploadIcon } from "@/components/chat/pdf-upload-icon";
@@ -20,6 +20,14 @@ import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { CommandsButton } from "@/components/layout/commands-button";
 import { SignedIn, useAuth } from "@clerk/nextjs";
 import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Thumbnail {
   src: string;
@@ -175,6 +183,7 @@ function ExpandableFolderRow({
   keyId,
   isExpanded,
   onToggle,
+  onFileClick,
   children
 }: {
   row: string[];
@@ -183,10 +192,61 @@ function ExpandableFolderRow({
   keyId: string;
   isExpanded: boolean;
   onToggle: () => void;
+  onFileClick?: (path: string) => void;
   children?: React.ReactNode;
 }) {
   const firstCell = row[0] || '';
   const isFolder = firstCell.includes('📁');
+  
+  // Check if it's a file (must have Type column explicitly saying "File", not "Directory")
+  const typeColumnIndex = headers.findIndex(h => h.toLowerCase() === 'type');
+  const typeValue = typeColumnIndex >= 0 ? row[typeColumnIndex]?.toLowerCase().trim() : '';
+  const isFile = typeColumnIndex >= 0 
+    ? typeValue === 'file' // Only treat as file if Type column explicitly says "File"
+    : !isFolder && !firstCell.includes('📁'); // If no Type column, check if it's not a folder (no 📁 icon)
+  
+  // Extract path (usually in second column, index 1)
+  const getPath = (): string | null => {
+    const pathColumnIndex = headers.findIndex(h => h.toLowerCase() === 'path');
+    const pathIndex = pathColumnIndex >= 0 ? pathColumnIndex : 1; // Default to index 1 if no Path column
+    if (row.length > pathIndex && row[pathIndex]) {
+      let path = row[pathIndex].trim();
+      path = path.replace(/\*\*/g, '');
+      path = path.replace(/`/g, '');
+      path = path.replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1');
+      return path;
+    }
+    return null;
+  };
+
+  const handleFileClick = () => {
+    // Double-check: don't treat directories as files
+    if (isFile && !isFolder && onFileClick) {
+      const path = getPath();
+      if (path) {
+        onFileClick(path);
+      }
+    }
+  };
+  
+  if (isFile) {
+    return (
+      <tr
+        key={`row-${rowIdx}`}
+        className="border-b border-border/40 last:border-b-0 hover:bg-muted/30 transition-colors cursor-pointer"
+        onClick={handleFileClick}
+      >
+        {row.map((cell, cellIdx) => (
+          <td
+            key={`cell-${rowIdx}-${cellIdx}`}
+            className="px-4 py-3 text-[15px] text-foreground/90"
+          >
+            {formatInlineContent(cell.trim())}
+          </td>
+        ))}
+      </tr>
+    );
+  }
   
   if (!isFolder) {
     return (
@@ -244,11 +304,13 @@ function ExpandableFolderRow({
 function NestedDirectoryTable({
   directories,
   parentKeyId,
-  openFile
+  openFile,
+  handleFileOpen
 }: {
   directories: string[][];
   parentKeyId: string;
   openFile?: (path: string, content: string) => void;
+  handleFileOpen?: (path: string) => void;
 }) {
   const [expandedDirs, setExpandedDirs] = useState<Map<number, boolean>>(new Map());
   const [dirContents, setDirContents] = useState<Map<number, { directories: string[][]; files: string[][]; loading: boolean }>>(new Map());
@@ -413,6 +475,7 @@ function NestedDirectoryTable({
                               directories={contents.directories}
                               parentKeyId={`${parentKeyId}-nested-${dirIdx}`}
                               openFile={openFile}
+                              handleFileOpen={handleFileOpen}
                             />
                           )}
                           {contents.files.length > 0 && (
@@ -437,20 +500,18 @@ function NestedDirectoryTable({
                                       headers={['Name', 'Path', 'Size', 'Modified']}
                                       rowIdx={fileIdx}
                                       keyId={`${parentKeyId}-nested-file-${fileIdx}`}
-                                      onFileClick={async (path: string) => {
-                                        if (!openFile) return;
-                                        try {
-                                          const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
-                                          if (response.ok) {
-                                            const data = await response.json();
-                                            openFile(path, data.content || '');
-                                          } else {
-                                            console.error('Failed to read file:', path);
-                                          }
-                                        } catch (error) {
-                                          console.error('Error reading file:', error);
-                                        }
-                                      }}
+                                      onFileClick={handleFileOpen || (async (path: string) => {
+                  if (!openFile) return;
+                  try {
+                    const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+                    if (response.ok) {
+                      const data = await response.json();
+                      openFile(path, data.content || '');
+                    }
+                  } catch (error) {
+                    console.error('Error reading file:', error);
+                  }
+                })}
                                     />
                                   ))}
                                 </tbody>
@@ -531,12 +592,14 @@ function MarkdownTable({
   headers, 
   rows, 
   keyId,
-  openFile
+  openFile,
+  handleFileOpen
 }: { 
   headers: string[]; 
   rows: string[][]; 
   keyId: string;
   openFile?: (path: string, content: string) => void;
+  handleFileOpen?: (path: string) => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Map<number, boolean>>(new Map());
@@ -698,6 +761,18 @@ function MarkdownTable({
                 keyId={`${keyId}-row-${rowIdx}`}
                 isExpanded={isExpandedFolder}
                 onToggle={() => handleFolderToggle(rowIdx, row)}
+                onFileClick={handleFileOpen || (async (path: string) => {
+                  if (!openFile) return;
+                  try {
+                    const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+                    if (response.ok) {
+                      const data = await response.json();
+                      openFile(path, data.content || '');
+                    }
+                  } catch (error) {
+                    console.error('Error reading file:', error);
+                  }
+                })}
               >
                 {contents?.loading ? (
                   <div className="py-4 text-sm text-muted-foreground text-center">
@@ -710,6 +785,7 @@ function MarkdownTable({
                         directories={contents.directories}
                         parentKeyId={`${keyId}-parent-${rowIdx}`}
                         openFile={openFile}
+                        handleFileOpen={handleFileOpen}
                       />
                     )}
                     {contents.files.length > 0 && (
@@ -734,22 +810,18 @@ function MarkdownTable({
                                 headers={['Name', 'Path', 'Size', 'Modified']}
                                 rowIdx={fileIdx}
                                 keyId={`${keyId}-nested-file-${fileIdx}`}
-                                onFileClick={async (path: string) => {
-                                  if (!openFile) return;
-                                  
-                                  try {
-                                    // Fetch file content
-                                    const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
-                                    if (response.ok) {
-                                      const data = await response.json();
-                                      openFile(path, data.content || '');
-                                    } else {
-                                      console.error('Failed to read file:', path);
-                                    }
-                                  } catch (error) {
-                                    console.error('Error reading file:', error);
-                                  }
-                                }}
+                                onFileClick={handleFileOpen || (async (path: string) => {
+                  if (!openFile) return;
+                  try {
+                    const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+                    if (response.ok) {
+                      const data = await response.json();
+                      openFile(path, data.content || '');
+                    }
+                  } catch (error) {
+                    console.error('Error reading file:', error);
+                  }
+                })}
                               />
                             ))}
                           </tbody>
@@ -1033,7 +1105,7 @@ function ToolExecutionStep({
 }
 
 // Format message content with code blocks, headers, and better structure
-function formatMessageContent(content: string, openFile?: (path: string, content: string) => void): React.ReactElement {
+function formatMessageContent(content: string, openFile?: (path: string, content: string) => void, handleFileOpen?: (path: string) => void): React.ReactElement {
   const parts: React.ReactElement[] = [];
   let key = 0;
 
@@ -1229,10 +1301,27 @@ function formatMessageContent(content: string, openFile?: (path: string, content
                 rows={table.rows}
                 keyId={`table-${key-1}`}
                 openFile={openFile}
+                handleFileOpen={handleFileOpen}
               />
             );
           }
           return;
+        }
+        
+        // Check if next line is a table placeholder - if so, flush current paragraph now
+        const nextLine = idx + 1 < lines.length ? lines[idx + 1] : null;
+        const nextIsTable = nextLine && nextLine.match(/^__TABLE_PLACEHOLDER_(\d+)__$/);
+        if (nextIsTable && currentParagraph.length > 0) {
+          const paragraphText = currentParagraph.join(' ');
+          textParts.push(
+            <p key={`p-${key++}`} className="mb-4 leading-[1.8] text-[15px]">
+              {formatInlineContent(paragraphText)}
+            </p>
+          );
+          if (lastNumberedSectionIndex >= 0) {
+            contentAfterLastNumberedSection += paragraphText + ' ';
+          }
+          currentParagraph = [];
         }
         const trimmedLine = line.trim();
 
@@ -1933,6 +2022,7 @@ export default function Home() {
   const [isPaused, setIsPaused] = useState(false);
   const [highlightedWordIndex, setHighlightedWordIndex] = useState<number | null>(null);
   const [speakingWords, setSpeakingWords] = useState<string[]>([]);
+  const [fileError, setFileError] = useState<{ path: string; reason: string; message: string } | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1947,6 +2037,99 @@ export default function Home() {
   const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
   const { setInsertTextHandler, setSendMessageHandler, sendMessage } = useChatInput();
   const { userId, isLoaded: authLoaded } = useAuth();
+
+  // Helper function to determine error reason from error message
+  const getFileErrorReason = (errorMessage: string, filePath: string): { reason: string; message: string } => {
+    const lowerError = errorMessage.toLowerCase();
+    const lowerPath = filePath.toLowerCase();
+
+    // Check for permission errors
+    if (lowerError.includes('permission denied') || lowerError.includes('eacces') || lowerError.includes('eperm')) {
+      return {
+        reason: 'Permission Denied',
+        message: `You don't have permission to read this file. The file may require elevated privileges or be owned by another user.`
+      };
+    }
+
+    // Check for directory errors
+    if (lowerError.includes('directory') || lowerError.includes('eisdir')) {
+      return {
+        reason: 'Directory Selected',
+        message: `This is a directory, not a file. Directories cannot be opened in the editor.`
+      };
+    }
+
+    // Check for binary files (common binary file extensions)
+    const binaryExtensions = ['.bin', '.exe', '.so', '.dll', '.dylib', '.o', '.a', '.lib', '.img', '.iso', '.vmlinuz', '.initrd'];
+    const isBinaryExtension = binaryExtensions.some(ext => lowerPath.endsWith(ext));
+    
+    // Check for common binary file paths
+    const binaryPaths = ['/boot/vmlinuz', '/boot/initrd', '/usr/bin/', '/usr/sbin/', '/bin/', '/sbin/'];
+    const isBinaryPath = binaryPaths.some(path => lowerPath.includes(path)) && !lowerPath.endsWith('.txt') && !lowerPath.endsWith('.md');
+
+    // Check for invalid UTF-8 (common error when reading binary files as text)
+    if (lowerError.includes('invalid') && (lowerError.includes('utf') || lowerError.includes('encoding'))) {
+      return {
+        reason: 'Binary File',
+        message: `This file appears to be a binary file (executable, image, or other non-text format). Binary files cannot be displayed as text in the editor.`
+      };
+    }
+
+    if (isBinaryExtension || isBinaryPath) {
+      return {
+        reason: 'Binary File',
+        message: `This file appears to be a binary file (executable, image, or other non-text format). Binary files cannot be displayed as text in the editor.`
+      };
+    }
+
+    // Check for file not found
+    if (lowerError.includes('not found') || lowerError.includes('enoent')) {
+      return {
+        reason: 'File Not Found',
+        message: `The file could not be found at this path. It may have been moved or deleted.`
+      };
+    }
+
+    // Check for file too large (if we detect this error)
+    if (lowerError.includes('too large') || lowerError.includes('size')) {
+      return {
+        reason: 'File Too Large',
+        message: `This file is too large to open in the editor. Try opening it with a different tool.`
+      };
+    }
+
+    // Generic error
+    return {
+      reason: 'Unable to Open File',
+      message: `Unable to open this file: ${errorMessage}`
+    };
+  };
+
+  // Helper function to handle file opening with error modal
+  const handleFileOpen = async (path: string) => {
+    if (!openFile) return;
+    
+    try {
+      const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.error) {
+          const errorInfo = getFileErrorReason(data.error, path);
+          setFileError({ path, ...errorInfo });
+          return;
+        }
+        openFile(path, data.content || '');
+      } else {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+        const errorInfo = getFileErrorReason(errorData.error || `HTTP ${response.status}`, path);
+        setFileError({ path, ...errorInfo });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorInfo = getFileErrorReason(errorMessage, path);
+      setFileError({ path, ...errorInfo });
+    }
+  };
 
   // Ensure component is mounted (client-side only) to prevent hydration issues
   useEffect(() => {
@@ -3034,6 +3217,7 @@ export default function Home() {
   };
 
   return (
+    <>
     <SplitView>
       <div className="flex h-full flex-col bg-background overflow-hidden relative">
         <style dangerouslySetInnerHTML={{
@@ -3294,8 +3478,98 @@ export default function Home() {
                                 mergedParts.push(part);
                               }
                             }
-                            return mergedParts;
-                          })().map((part, partIdx) => {
+                            
+                            // Separate text and tool parts
+                            const textParts = mergedParts.filter(p => p.type === 'text');
+                            const toolParts = mergedParts.filter(p => p.type === 'tool');
+                            
+                            // Extract tables from text parts that come before tool parts
+                            // Tables are markdown tables (lines starting with |)
+                            const textWithoutTables: typeof textParts = [];
+                            const extractedTables: Array<{ content: string; originalTextIdx: number }> = [];
+                            
+                            textParts.forEach((textPart, idx) => {
+                              const lines = textPart.content.split('\n');
+                              const textLines: string[] = [];
+                              let currentTable: string[] = [];
+                              let inTable = false;
+                              let tableHeading: string | null = null;
+                              
+                              lines.forEach((line, lineIdx) => {
+                                const trimmed = line.trim();
+                                const isTableLine = trimmed.startsWith('|') && trimmed.includes('|');
+                                const isTableHeader = trimmed.match(/^\|[\s\-\|:]+\|$/); // Separator row like |---|---|
+                                const isHeading = trimmed.startsWith('###') || trimmed.startsWith('##');
+                                
+                                if (isTableLine || isTableHeader) {
+                                  if (!inTable) {
+                                    inTable = true;
+                                    currentTable = [];
+                                    // Check if previous line was a heading (like "### Contents")
+                                    if (lineIdx > 0 && textLines.length > 0) {
+                                      const prevLine = textLines[textLines.length - 1].trim();
+                                      if (prevLine.startsWith('###') || prevLine.startsWith('##')) {
+                                        tableHeading = textLines.pop() || null;
+                                      }
+                                    }
+                                  }
+                                  currentTable.push(line);
+                                } else {
+                                  if (inTable) {
+                                    // End of table - save it with heading if present
+                                    if (currentTable.length > 0) {
+                                      const tableContent = tableHeading 
+                                        ? `${tableHeading}\n\n${currentTable.join('\n')}`
+                                        : currentTable.join('\n');
+                                      extractedTables.push({
+                                        content: tableContent,
+                                        originalTextIdx: idx
+                                      });
+                                    }
+                                    currentTable = [];
+                                    tableHeading = null;
+                                    inTable = false;
+                                  }
+                                  textLines.push(line);
+                                }
+                              });
+                              
+                              // Handle table at end of content
+                              if (inTable && currentTable.length > 0) {
+                                const tableContent = tableHeading 
+                                  ? `${tableHeading}\n\n${currentTable.join('\n')}`
+                                  : currentTable.join('\n');
+                                extractedTables.push({
+                                  content: tableContent,
+                                  originalTextIdx: idx
+                                });
+                              }
+                              
+                              // Create text part without tables
+                              const textWithoutTable = textLines.join('\n').trim();
+                              if (textWithoutTable) {
+                                textWithoutTables.push({
+                                  ...textPart,
+                                  content: textWithoutTable
+                                });
+                              } else if (textLines.length > 0) {
+                                // Keep even if empty after trimming (preserve structure)
+                                textWithoutTables.push({
+                                  ...textPart,
+                                  content: textLines.join('\n')
+                                });
+                              }
+                            });
+                            
+                            // Reorder: text without tables first, then tool parts, then extracted tables
+                            const reorderedParts: Array<typeof message.contentParts[0] | { type: 'extracted-table'; content: string }> = [
+                              ...textWithoutTables,
+                              ...toolParts,
+                              ...extractedTables.map(t => ({ type: 'extracted-table' as const, content: t.content }))
+                            ];
+                            
+                            return reorderedParts;
+                          })().map((part, partIdx, reorderedParts) => {
                             if (part.type === 'text') {
                               return (
                                 <div
@@ -3321,13 +3595,14 @@ export default function Home() {
                                       .replace(/I've\s+generated\s+\d+\s+image/i, '')
                                       .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                       .trim(),
-                                    openFile
+                                    openFile,
+                                    handleFileOpen
                                   ) : null}
                                 </div>
                               );
                             } else if (part.type === 'tool') {
-                              // Count how many tools have appeared before this one
-                              const toolIndex = message.contentParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
+                              // Count how many tools have appeared before this one in the reordered array
+                              const toolIndex = reorderedParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
                               return (
                                 <ToolExecutionStep
                                   key={`tool-${partIdx}`}
@@ -3337,6 +3612,17 @@ export default function Home() {
                                   status={part.status}
                                   index={toolIndex}
                                 />
+                              );
+                            } else if ('type' in part && part.type === 'extracted-table') {
+                              // Render extracted table after tool execution steps
+                              return (
+                                <div key={`extracted-table-${partIdx}`} className="my-4">
+                                  {formatMessageContent(
+                                    part.content,
+                                    openFile,
+                                    handleFileOpen
+                                  )}
+                                </div>
                               );
                             }
                             return null;
@@ -3381,7 +3667,8 @@ export default function Home() {
                                   .replace(/I've\s+generated\s+\d+\s+image/i, '')
                                   .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                   .trim(),
-                            openFile
+                            openFile,
+                            handleFileOpen
                           ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
                             <ProcessingIndicator />
                           ) : null}
@@ -3644,6 +3931,34 @@ export default function Home() {
       <CodeMirrorEditor />
     )}
     </SplitView>
+    <Dialog open={!!fileError} onOpenChange={(open) => !open && setFileError(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+            {fileError?.reason || 'Error Opening File'}
+          </DialogTitle>
+          <DialogDescription className="pt-2">
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {fileError?.message}
+              </p>
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <p className="text-xs text-muted-foreground font-mono break-all">
+                  {fileError?.path}
+                </p>
+              </div>
+            </div>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={() => setFileError(null)} variant="default">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
