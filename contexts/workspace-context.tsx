@@ -28,6 +28,8 @@ export interface BrowserState {
   isOpen: boolean;
 }
 
+export type MobilePanelType = "chat" | "editor" | "image" | "video" | "browser" | "files";
+
 interface WorkspaceContextType {
   selectedPath: string | null;
   setSelectedPath: (path: string | null) => void;
@@ -51,6 +53,9 @@ interface WorkspaceContextType {
   browserState: BrowserState;
   openBrowser: (url: string, title?: string) => void;
   closeBrowser: () => void;
+  // Mobile panel state
+  activeMobilePanel: MobilePanelType;
+  setActiveMobilePanel: (panel: MobilePanelType) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
@@ -58,7 +63,10 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedPathType, setSelectedPathType] = useState<"file" | "directory" | null>(null);
-  
+
+  // Mobile panel state - default to chat view
+  const [activeMobilePanel, setActiveMobilePanel] = useState<MobilePanelType>("chat");
+
   // Editor state
   const [editorState, setEditorState] = useState<EditorState>({
     filePath: null,
@@ -100,6 +108,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // Also set as selected path so LLM knows about it
     setSelectedPath(path);
     setSelectedPathType("file");
+    // Auto-switch to editor panel on mobile
+    setActiveMobilePanel("editor");
   }, [setSelectedPath, setSelectedPathType]);
 
   const closeEditor = useCallback(() => {
@@ -162,6 +172,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ...prev,
       isOpen: false,
     }));
+    // Auto-switch to image panel on mobile
+    setActiveMobilePanel("image");
   }, []);
 
   const closeImage = useCallback(() => {
@@ -186,6 +198,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ...prev,
       isOpen: false,
     }));
+    // Auto-switch to video panel on mobile
+    setActiveMobilePanel("video");
   }, []);
 
   const closeVideo = useCallback(() => {
@@ -252,7 +266,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               sid,
               isOpen: true,
             });
-            
+
             // Close other panels when opening browser
             setEditorState(prev => ({
               ...prev,
@@ -266,6 +280,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               ...prev,
               isOpen: false,
             }));
+            // Auto-switch to browser panel on mobile
+            setActiveMobilePanel("browser");
             return;
           }
         }
@@ -295,6 +311,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         ...prev,
         isOpen: false,
       }));
+      // Auto-switch to browser panel on mobile
+      setActiveMobilePanel("browser");
     } catch (error) {
       console.error('[WorkspaceContext] Error opening browser:', error);
       // Still open browser panel but show error
@@ -304,6 +322,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         sid: null,
         isOpen: true,
       });
+      // Auto-switch to browser panel on mobile even if error
+      setActiveMobilePanel("browser");
     }
   }, []);
 
@@ -328,8 +348,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [browserState.sid]);
 
   return (
-    <WorkspaceContext.Provider value={{ 
-      selectedPath, 
+    <WorkspaceContext.Provider value={{
+      selectedPath,
       setSelectedPath,
       selectedPathType,
       setSelectedPathType,
@@ -347,6 +367,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       browserState,
       openBrowser,
       closeBrowser,
+      activeMobilePanel,
+      setActiveMobilePanel,
     }}>
       {children}
     </WorkspaceContext.Provider>
