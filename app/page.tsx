@@ -2525,38 +2525,58 @@ export default function Home() {
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
   };
 
-  // Simple, reliable scroll to bottom function
+  // Reliable scroll to bottom function
   const scrollToBottom = (immediate = false) => {
-    const container = messagesContainerRef.current;
-    if (!container) return;
-    
-    const scroll = () => {
-      if (container.scrollHeight > container.clientHeight) {
-        if (immediate) {
-          container.scrollTop = container.scrollHeight;
-        } else {
-          container.scrollTo({
-            top: container.scrollHeight,
-            behavior: "smooth"
+    const attemptScroll = (attempt = 0) => {
+      const container = messagesContainerRef.current;
+      if (!container) {
+        if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+          if (attempt === 0) console.log('[Scroll Debug] Container ref not available, retrying...');
+        }
+        if (attempt < 20) {
+          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        }
+        return;
+      }
+      
+      // Wait for container to have content
+      if (container.scrollHeight === 0 || container.clientHeight === 0) {
+        if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+          if (attempt === 0) console.log('[Scroll Debug] Container not ready, retrying...', {
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight
           });
         }
+        if (attempt < 30) {
+          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        }
+        return;
       }
-    };
-    
-    // Try immediately
-    scroll();
-    
-    // Retry if container not ready (up to 30 frames = ~500ms)
-    let attempts = 0;
-    const retry = () => {
-      attempts++;
-      if (container.scrollHeight === 0 && attempts < 30) {
-        requestAnimationFrame(retry);
+      
+      // Scroll to bottom
+      const targetScroll = container.scrollHeight - container.clientHeight;
+      if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+        console.log('[Scroll Debug] Scrolling to bottom', {
+          immediate,
+          attempt,
+          scrollHeight: container.scrollHeight,
+          clientHeight: container.clientHeight,
+          currentScrollTop: container.scrollTop,
+          targetScroll
+        });
+      }
+      
+      if (immediate) {
+        container.scrollTop = container.scrollHeight;
       } else {
-        scroll();
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: "smooth"
+        });
       }
     };
-    requestAnimationFrame(retry);
+    
+    attemptScroll(0);
   };
 
   // Track last message count to detect new messages
@@ -2567,10 +2587,13 @@ export default function Home() {
   useEffect(() => {
     if (messages.length > 0 && !hasScrolledOnLoadRef.current && !isLoading && !isProcessing) {
       hasScrolledOnLoadRef.current = true;
-      // Use double RAF + small delay for DOM readiness
+      if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+        console.log('[Scroll Debug] Page load scroll triggered', { messagesCount: messages.length });
+      }
+      // Wait for DOM to be ready
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          setTimeout(() => scrollToBottom(true), 50);
+          scrollToBottom(true);
         });
       });
     }
@@ -2578,17 +2601,25 @@ export default function Home() {
 
   // Auto-scroll when new user message is added
   useEffect(() => {
-    if (messages.length > lastMessageCountRef.current) {
-      const lastMessage = messages[messages.length - 1];
+    const currentCount = messages.length;
+    if (currentCount > lastMessageCountRef.current) {
+      const lastMessage = messages[currentCount - 1];
       if (lastMessage && lastMessage.role === "user") {
-        // Scroll immediately when user sends message
+        if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+          console.log('[Scroll Debug] User message scroll triggered', { 
+            previousCount: lastMessageCountRef.current,
+            currentCount,
+            messageId: lastMessage.id
+          });
+        }
+        // Scroll when user sends message
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             scrollToBottom(false);
           });
         });
       }
-      lastMessageCountRef.current = messages.length;
+      lastMessageCountRef.current = currentCount;
     }
   }, [messages.length]);
 
