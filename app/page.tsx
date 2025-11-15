@@ -2550,22 +2550,33 @@ export default function Home() {
         return;
       }
       
-      // Wait for container to have content AND be visible
+      // Check if container is actually in the DOM and visible
+      const rect = container.getBoundingClientRect();
+      const isInDOM = container.isConnected;
       const hasContent = container.scrollHeight > 0;
       const hasDimensions = container.clientHeight > 0;
-      const isVisible = container.offsetHeight > 0;
+      const isVisible = rect.width > 0 && rect.height > 0;
+      const computedStyle = window.getComputedStyle(container);
+      const isDisplayed = computedStyle.display !== 'none';
+      const isNotHidden = computedStyle.visibility !== 'hidden';
       
-      if (!hasContent || !hasDimensions || !isVisible) {
+      if (!isInDOM || !hasContent || !hasDimensions || !isVisible || !isDisplayed || !isNotHidden) {
         if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
           if (attempt === 1 || attempt % 10 === 0) {
             console.log('[Scroll Debug] Container not ready, retrying...', {
               attempt,
+              isInDOM,
               scrollHeight: container.scrollHeight,
               clientHeight: container.clientHeight,
               offsetHeight: container.offsetHeight,
+              rect: { width: rect.width, height: rect.height },
+              display: computedStyle.display,
+              visibility: computedStyle.visibility,
               hasContent,
               hasDimensions,
-              isVisible
+              isVisible,
+              isDisplayed,
+              isNotHidden
             });
           }
         }
@@ -2575,9 +2586,13 @@ export default function Home() {
           if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
             console.warn('[Scroll Debug] Failed to scroll - container never ready', {
               attempt,
+              isInDOM,
               scrollHeight: container.scrollHeight,
               clientHeight: container.clientHeight,
-              offsetHeight: container.offsetHeight
+              offsetHeight: container.offsetHeight,
+              rect: { width: rect.width, height: rect.height },
+              display: computedStyle.display,
+              visibility: computedStyle.visibility
             });
           }
         }
