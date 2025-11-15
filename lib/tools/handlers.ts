@@ -147,17 +147,12 @@ export async function executeTool(
           context
         );
 
+      // DEPRECATED: imagen.generate tool removed
+      // Image generation is now handled directly by the chat route via pattern detection
+      // This case should never be reached, but kept for backward compatibility
       case "imagen.generate":
-        return await handleImagenGenerate(
-          args as {
-            prompt: string;
-            numberOfImages?: number;
-            aspectRatio?: "1:1" | "9:16" | "16:9" | "4:3" | "3:4";
-            imageSize?: "1K" | "2K";
-            outputMimeType?: "image/jpeg" | "image/png";
-          },
-          context
-        );
+        logger.warn("imagen.generate tool called - this should not happen. Image generation is handled directly by chat route.");
+        throw new Error("imagen.generate tool is deprecated. Image generation is handled automatically by the system.");
 
       default:
         throw new Error(`Unknown tool: ${name}`);

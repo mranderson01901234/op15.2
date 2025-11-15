@@ -3,6 +3,7 @@
 import { useUser } from "@clerk/nextjs";
 import { AgentAutoInstaller } from "./agent-auto-installer";
 import { WorkspaceSelector } from "./workspace-selector";
+import { useLocalEnvEnabled } from "@/hooks/use-local-env-enabled";
 
 interface LocalEnvConnectorProps {
   isCollapsed?: boolean;
@@ -10,8 +11,9 @@ interface LocalEnvConnectorProps {
 
 export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProps) {
   const { user, isLoaded } = useUser();
+  const { isEnabled, isLoaded: toggleLoaded } = useLocalEnvEnabled();
 
-  if (!isLoaded || !user) {
+  if (!isLoaded || !user || !toggleLoaded) {
     return null;
   }
 
@@ -19,17 +21,18 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
     return null;
   }
 
+  // Don't render local environment components if disabled
+  if (!isEnabled) {
+    return null;
+  }
+
   return (
     <div className="flex flex-col gap-3 py-2">
-      {/* Workspace Root Selector */}
-      <div className="border-b border-border pb-3">
-        <WorkspaceSelector />
-      </div>
+      {/* Workspace Root Selector - Always visible */}
+      <WorkspaceSelector />
       
-      {/* Agent Auto-Installer */}
-      <div>
-        <AgentAutoInstaller />
-      </div>
+      {/* Agent Auto-Installer - Only shows when not connected */}
+      <AgentAutoInstaller />
     </div>
   );
 }

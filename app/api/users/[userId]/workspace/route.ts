@@ -126,8 +126,20 @@ export async function POST(
       // Full filesystem access - universal root
       finalWorkspaceRoot = '/';
     } else if (restrictionLevel === 'custom' && workspaceRoot) {
-      // User-selected custom directory
-      finalWorkspaceRoot = workspaceRoot;
+      // User-selected custom directory - normalize the path
+      const normalizedPath = workspaceRoot.trim();
+      if (normalizedPath && normalizedPath !== '') {
+        // Ensure path starts with / and doesn't end with / (unless it's root)
+        finalWorkspaceRoot = normalizedPath.startsWith('/') 
+          ? normalizedPath.endsWith('/') && normalizedPath !== '/' 
+            ? normalizedPath.slice(0, -1) 
+            : normalizedPath
+          : '/' + normalizedPath;
+      } else {
+        // Invalid custom path, default to root
+        console.warn('Invalid custom workspace root provided, defaulting to /');
+        finalWorkspaceRoot = '/';
+      }
     }
 
     // Store configuration

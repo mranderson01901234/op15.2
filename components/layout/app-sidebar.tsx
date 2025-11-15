@@ -1,8 +1,10 @@
 "use client";
 
-import { Sidebar, SidebarContent, SidebarHeader, SidebarRail, SidebarTrigger } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarRail, SidebarTrigger, SidebarFooter } from "@/components/ui/sidebar";
 import { SidebarNav } from "./sidebar-nav";
 import { useSidebar } from "@/components/ui/sidebar";
+import { AgentStatusFooter } from "@/components/local-env/agent-status-footer";
+import { LocalEnvToggle } from "@/components/local-env/local-env-toggle";
 import { cn } from "@/lib/utils";
 
 // LLM Assistant logo SVG component
@@ -55,7 +57,10 @@ export function AppSidebar() {
       <SidebarContent className="flex-1 min-h-0 overflow-hidden invisible-scrollbar flex flex-col">
         <SidebarNav />
       </SidebarContent>
+      <SidebarFooter className="border-t border-sidebar-border/50">
+        <LocalEnvToggle />
+        <AgentStatusFooter />
+      </SidebarFooter>
     </Sidebar>
   );
 }
-

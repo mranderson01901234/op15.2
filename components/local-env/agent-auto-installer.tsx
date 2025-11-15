@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Download, CheckCircle, AlertCircle, Loader2, Terminal, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLocalEnvEnabled } from "@/hooks/use-local-env-enabled";
 
 export function AgentAutoInstaller() {
   const { user, isLoaded } = useUser();
+  const { isEnabled, isLoaded: toggleLoaded } = useLocalEnvEnabled();
   const [isInstalling, setIsInstalling] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -15,6 +17,9 @@ export function AgentAutoInstaller() {
   const [checkingStatus, setCheckingStatus] = useState(true);
 
   useEffect(() => {
+    // Only run if local environment is enabled
+    if (!isEnabled || !toggleLoaded) return;
+    
     // Detect platform
     if (typeof window !== "undefined") {
       const userAgent = navigator.userAgent.toLowerCase();
@@ -29,10 +34,10 @@ export function AgentAutoInstaller() {
       // Check if agent is already installed and connected
       checkAgentStatus();
     }
-  }, [user]);
+  }, [user, isEnabled, toggleLoaded]);
 
   const checkAgentStatus = async () => {
-    if (!user) return;
+    if (!user || !isEnabled) return;
     
     setCheckingStatus(true);
     try {
@@ -128,7 +133,12 @@ export function AgentAutoInstaller() {
     }
   };
 
-  if (!isLoaded || !user) {
+  if (!isLoaded || !user || !toggleLoaded || !isEnabled) {
+    return null;
+  }
+
+  // Hide component when agent is connected (it will show in footer instead)
+  if (isConnected) {
     return null;
   }
 
@@ -138,23 +148,12 @@ export function AgentAutoInstaller() {
         <div className="text-xs font-medium text-foreground">
           Local Agent
         </div>
-        {isConnected && (
-          <div className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-            <span>Connected</span>
-          </div>
-        )}
       </div>
 
       {checkingStatus ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
           <Loader2 className="h-3 w-3 animate-spin" />
           <span>Checking status...</span>
-        </div>
-      ) : isConnected ? (
-        <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 py-1">
-          <CheckCircle className="h-3 w-3" />
-          <span>Agent installed and running</span>
         </div>
       ) : isInstalled ? (
         <div className="space-y-2">
