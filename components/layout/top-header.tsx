@@ -102,38 +102,36 @@ export function TopHeader() {
   const displayRoot = workspaceRoot?.startsWith('/') ? workspaceRoot.slice(1) : workspaceRoot;
 
   return (
-    <div className="fixed top-0 right-4 z-50 px-4 py-1.5 bg-sidebar border-b border-l border-sidebar-border">
-      <div className="flex items-center gap-3 text-sm">
-        {/* Signed Out: Show Sign In / Start for Free */}
-        <SignedOut>
-          <SignInButton mode="modal">
-            <button className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors">
-              Sign in
-            </button>
-          </SignInButton>
-          <SignUpButton mode="modal">
-            <button className="px-2 py-1 text-xs font-medium bg-white text-black rounded hover:bg-white/90 transition-colors">
-              Start for free
-            </button>
-          </SignUpButton>
-        </SignedOut>
-
-        {/* Signed In: Show Workspace Root + Sign Out */}
-        <SignedIn>
-          {displayRoot && (
-            <div className="px-2 py-1 text-xs text-muted-foreground font-mono truncate max-w-[200px]" title={workspaceRoot}>
-              {displayRoot}
-            </div>
-          )}
-          <button
-            onClick={handleSignOut}
-            disabled={isSigningOut}
-            className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors disabled:opacity-50"
-          >
-            {isSigningOut ? "Signing out..." : "Sign Out"}
+    <div className="fixed top-0 right-4 z-50 flex items-center gap-3 py-1.5">
+      {/* Signed Out: Show Sign In / Start for Free */}
+      <SignedOut>
+        <SignInButton mode="modal">
+          <button className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors">
+            Sign in
           </button>
-        </SignedIn>
-      </div>
+        </SignInButton>
+        <SignUpButton mode="modal">
+          <button className="px-2 py-1 text-xs font-medium bg-white text-black rounded hover:bg-white/90 transition-colors">
+            Start for free
+          </button>
+        </SignUpButton>
+      </SignedOut>
+
+      {/* Signed In: Show Workspace Root + Sign Out */}
+      <SignedIn>
+        {displayRoot && (
+          <div className="px-2 py-1 text-xs text-muted-foreground font-mono truncate max-w-[200px]" title={workspaceRoot}>
+            {displayRoot}
+          </div>
+        )}
+        <button
+          onClick={handleSignOut}
+          disabled={isSigningOut}
+          className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors disabled:opacity-50"
+        >
+          {isSigningOut ? "Signing out..." : "Sign Out"}
+        </button>
+      </SignedIn>
     </div>
   );
 }
