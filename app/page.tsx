@@ -4089,12 +4089,531 @@ export default function Home() {
               <LocalEnvConnector />
             </div>
             {/* Messages Area - Scrollable */}
-            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 premium-scrollbar">
+            <div 
+              ref={messagesContainerRef} 
+              className="flex-1 overflow-y-auto p-4 premium-scrollbar"
+              style={{
+                minHeight: 0, // Ensure flex child can shrink below content size
+              }}
+            >
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center">
                 <p className="text-yellow-100 text-sm">Start a conversation...</p>
               </div>
-            ) : null}
+            ) : (
+              <div className="mx-auto max-w-5xl w-full pt-32 pb-24">
+                {messages.map((message, index) => {
+                  // Only show assistant messages if they have content (avoid showing empty streaming placeholders)
+                  // Show if: user message, has content, has formatted search, has media, has tool calls, OR is currently loading
+                  const hasContent = message.content && message.content.trim().length > 0;
+                  const hasToolCalls = message.toolCalls && message.toolCalls.length > 0;
+                  const hasMedia = (message.images && message.images.length > 0) || (message.videos && message.videos.length > 0);
+                  const isCurrentlyStreaming = message.role === "assistant" && index === messages.length - 1 && (isLoading || isProcessing);
+                  // Check if this message was recently streaming (has timestamp and is the last assistant message)
+                  // This ensures messages don't disappear immediately after streaming ends
+                  const wasRecentlyStreaming = message.role === "assistant" && 
+                                             index === messages.length - 1 && 
+                                             message.timestamp && 
+                                             (Date.now() - message.timestamp < 1000); // Within last second
+
+                  const shouldShow = message.role === "user" ||
+                                     hasContent ||
+                                     message.formattedSearch ||
+                                     hasMedia ||
+                                     hasToolCalls ||
+                                     isCurrentlyStreaming ||
+                                     wasRecentlyStreaming;
+
+                  if (!shouldShow) return null;
+
+                  // Use a key that includes content length for assistant messages to trigger re-mount on first content
+                  const messageKey = message.role === "assistant" && message.content
+                    ? `${message.id}-${message.content.length > 0 ? 'visible' : 'empty'}`
+                    : message.id;
+                  
+                  // Determine animation class based on content length
+                  // Short messages (< 200 chars) fade in fully, longer messages rotate between top-to-bottom and left-to-right
+                  const contentLength = message.content?.length || 0;
+                  const animationClass = message.role === "assistant" && message.content && !message.formattedSearch
+                    ? getAssistantAnimationClass(message.id, contentLength)
+                    : "";
+
+                  // Find the last user message to attach ref (check if this is the last user message)
+                  const lastUserMessageIndex = messages.map((m, idx) => m.role === "user" ? idx : -1).filter(idx => idx !== -1).pop();
+                  const isLastUserMessage = message.role === "user" && lastUserMessageIndex !== undefined && index === lastUserMessageIndex;
+                  
+                  // Check if this is the currently streaming assistant message
+                  const isLastAssistantMessage = message.role === "assistant" && index === messages.length - 1;
+                  const isStreaming = isLastAssistantMessage && (isLoading || isProcessing) && message.content && message.content.length > 0;
+                  
+                  // Check if message contains a table (markdown table pattern)
+                  const hasTable = message.content && /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/.test(message.content);
+
+                  return (
+                  <div
+                    key={messageKey}
+                    ref={isLastUserMessage ? lastUserMessageRef : null}
+                    className={`flex mb-8 ${
+                      message.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    <div
+                      className={`${
+                        message.role === "user" ? "" : hasTable ? "max-w-full" : "max-w-[92%]"
+                      } group relative ${
+                        message.role === "assistant"
+                          ? "pr-3 py-3 rounded-r-sm"
+                          : ""
+                      }`}
+                      style={message.role === "assistant" ? {
+                        animation: 'fadeInAssistant 0.8s ease-out forwards',
+                        willChange: 'opacity',
+                        maxWidth: hasTable ? '100%' : 'min(92%, 70ch)', // Full width for tables, optimal reading width otherwise
+                      } : {
+                        animation: 'fadeIn 0.3s ease-in-out',
+                        animationFillMode: 'backwards',
+                        animationDelay: `${index * 0.05}s`,
+                        maxWidth: 'min(92.625%, 80.275ch)', // Extended width for better readability
+                      }}
+                    >
+                      {/* Formatted Search Response */}
+                      {message.role === "assistant" && message.formattedSearch && (
+                        <FormattedSearchResponse 
+                          searchData={message.formattedSearch} 
+                          userQuery={message.userQuery}
+                          content={message.content}
+                        />
+                      )}
+                      
+                      {/* Images section - only for assistant messages (fallback if no formatted search) */}
+                      {message.role === "assistant" && !message.formattedSearch && message.images && message.images.length > 0 && (
+                        <div className="mb-4 flex flex-wrap gap-2">
+                          {message.images.map((image, idx) => (
+                            image.thumbnail?.src ? (
+                              <a
+                                key={idx}
+                                href={image.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block hover:opacity-80 transition-opacity"
+                              >
+                                <img
+                                  src={image.thumbnail.src}
+                                  alt={image.title || `Image ${idx + 1}`}
+                                  className="h-24 w-24 object-cover rounded border border-border/50 cursor-pointer"
+                                  loading="lazy"
+                                />
+                              </a>
+                            ) : null
+                          ))}
+                        </div>
+                      )}
+                      {/* Watch section - videos for assistant messages (fallback if no formatted search) */}
+                      {message.role === "assistant" && !message.formattedSearch && message.videos && message.videos.length > 0 && (
+                        <div className="mb-4">
+                          <div className="text-sm text-muted-foreground mb-2 font-medium">Watch</div>
+                          <div className="flex flex-wrap gap-2">
+                            {message.videos.map((video, idx) => (
+                              video.thumbnail?.src ? (
+                                <a
+                                  key={idx}
+                                  href={video.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block hover:opacity-80 transition-opacity group relative"
+                                >
+                                  <div className="relative">
+                                    <img
+                                      src={video.thumbnail.src}
+                                      alt={video.title || `Video ${idx + 1}`}
+                                      className="h-32 w-48 object-cover rounded border border-border/50 cursor-pointer"
+                                      loading="lazy"
+                                    />
+                                    {/* Play icon overlay */}
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors rounded">
+                                      <svg
+                                        className="w-8 h-8 text-white opacity-90"
+                                        fill="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path d="M8 5v14l11-7z" />
+                                      </svg>
+                                    </div>
+                                    {/* Duration badge */}
+                                    {video.duration && (
+                                      <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
+                                        {video.duration}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {video.title && (
+                                    <div className="mt-1 text-xs text-muted-foreground line-clamp-2 max-w-[192px]">
+                                      {video.title}
+                                    </div>
+                                  )}
+                                </a>
+                              ) : null
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Regular content (only show if no formatted search) */}
+                      {!message.formattedSearch && (hasContent || (hasToolCalls && message.role === "assistant") || isCurrentlyStreaming || isStreaming) && (
+                        <div className={message.role === "user" ? "space-y-1" : "space-y-0"}>
+                          {/* Interleaved content and tool execution for assistant messages */}
+                          {message.role === "assistant" && message.contentParts && message.contentParts.length > 0 ? (
+                            <div className="space-y-0">
+                              {(() => {
+                                // Merge adjacent text parts to prevent duplication
+                                const mergedParts: typeof message.contentParts = [];
+                                for (let i = 0; i < message.contentParts.length; i++) {
+                                  const part = message.contentParts[i];
+                                  if (part.type === 'text') {
+                                    // If last merged part is also text, merge them
+                                    const lastMerged = mergedParts[mergedParts.length - 1];
+                                    if (lastMerged && lastMerged.type === 'text') {
+                                      lastMerged.content += part.content;
+                                    } else {
+                                      mergedParts.push({ ...part });
+                                    }
+                                  } else {
+                                    mergedParts.push(part);
+                                  }
+                                }
+                                
+                                // Separate text and tool parts
+                                const textParts = mergedParts.filter(p => p.type === 'text');
+                                const toolParts = mergedParts.filter(p => p.type === 'tool');
+                                
+                                // Extract tables from text parts that come before tool parts
+                                // Tables are markdown tables (lines starting with |)
+                                const textWithoutTables: typeof textParts = [];
+                                const extractedTables: Array<{ content: string; originalTextIdx: number }> = [];
+                                
+                                textParts.forEach((textPart, idx) => {
+                                  const lines = textPart.content.split('\n');
+                                  const textLines: string[] = [];
+                                  let currentTable: string[] = [];
+                                  let inTable = false;
+                                  let tableHeading: string | null = null;
+                                  
+                                  lines.forEach((line, lineIdx) => {
+                                    const trimmed = line.trim();
+                                    const isTableLine = trimmed.startsWith('|') && trimmed.includes('|');
+                                    const isTableHeader = trimmed.match(/^\|[\s\-:|]+\|$/); // Separator row like |---|---|
+                                    const isHeading = trimmed.startsWith('###') || trimmed.startsWith('##');
+                                    
+                                    if (isTableLine || isTableHeader) {
+                                      if (!inTable) {
+                                        inTable = true;
+                                        currentTable = [];
+                                        // Check if previous line was a heading (like "### Contents")
+                                        if (lineIdx > 0 && textLines.length > 0) {
+                                          const prevLine = textLines[textLines.length - 1].trim();
+                                          if (prevLine.startsWith('###') || prevLine.startsWith('##')) {
+                                            tableHeading = textLines.pop() || null;
+                                          }
+                                        }
+                                      }
+                                      currentTable.push(line);
+                                    } else {
+                                      if (inTable) {
+                                        // End of table - save it with heading if present
+                                        if (currentTable.length > 0) {
+                                          const tableContent = tableHeading 
+                                            ? `${tableHeading}\n\n${currentTable.join('\n')}`
+                                            : currentTable.join('\n');
+                                          extractedTables.push({
+                                            content: tableContent,
+                                            originalTextIdx: idx
+                                          });
+                                        }
+                                        currentTable = [];
+                                        tableHeading = null;
+                                        inTable = false;
+                                      }
+                                      textLines.push(line);
+                                    }
+                                  });
+                                  
+                                  // Handle table at end of content
+                                  if (inTable && currentTable.length > 0) {
+                                    const tableContent = tableHeading 
+                                      ? `${tableHeading}\n\n${currentTable.join('\n')}`
+                                      : currentTable.join('\n');
+                                    extractedTables.push({
+                                      content: tableContent,
+                                      originalTextIdx: idx
+                                    });
+                                  }
+                                  
+                                  // Create text part without tables
+                                  const textWithoutTable = textLines.join('\n').trim();
+                                  if (textWithoutTable) {
+                                    textWithoutTables.push({
+                                      ...textPart,
+                                      content: textWithoutTable
+                                    });
+                                  } else if (textLines.length > 0) {
+                                    // Keep even if empty after trimming (preserve structure)
+                                    textWithoutTables.push({
+                                      ...textPart,
+                                      content: textLines.join('\n')
+                                    });
+                                  }
+                                });
+                                
+                                // Reorder: text without tables first, then tool parts, then extracted tables
+                                const reorderedParts: Array<typeof message.contentParts[0] | { type: 'extracted-table'; content: string }> = [
+                                  ...textWithoutTables,
+                                  ...toolParts,
+                                  ...extractedTables.map(t => ({ type: 'extracted-table' as const, content: t.content }))
+                                ];
+                                
+                                return reorderedParts;
+                              })().map((part, partIdx, reorderedParts) => {
+                                if (part.type === 'text') {
+                                  return (
+                                    <div
+                                      key={`text-${partIdx}`}
+                                      data-message-id={`${message.id}-${partIdx}`}
+                                      className={`break-words text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`}
+                                      style={{
+                                        lineHeight: "1.8",
+                                        whiteSpace: "pre-wrap",
+                                        wordSpacing: "normal",
+                                        letterSpacing: "0.01em",
+                                        textAlign: "left",
+                                        wordBreak: "normal",
+                                        overflowWrap: "normal",
+                                      } as React.CSSProperties}
+                                    >
+                                      {part.content && part.content.trim().length > 0 ? formatMessageContent(
+                                        part.content
+                                          .replace(/\bImagen\s*4\b/gi, '')
+                                          .replace(/\bImagen\b/gi, '')
+                                          .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                          .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                          .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                          .trim(),
+                                        openFile,
+                                        handleFileOpen
+                                      ) : null}
+                                    </div>
+                                  );
+                                } else if (part.type === 'tool') {
+                                  // Count how many tools have appeared before this one in the reordered array
+                                  const toolIndex = reorderedParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
+                                  return (
+                                    <ToolExecutionStep
+                                      key={`tool-${partIdx}`}
+                                      name={part.name}
+                                      args={part.args}
+                                      response={part.response}
+                                      status={part.status}
+                                      index={toolIndex}
+                                    />
+                                  );
+                                } else if ('type' in part && part.type === 'extracted-table') {
+                                  // Render extracted table after tool execution steps
+                                  return (
+                                    <div key={`extracted-table-${partIdx}`} className="my-4">
+                                      {formatMessageContent(
+                                        part.content,
+                                        openFile,
+                                        handleFileOpen
+                                      )}
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })}
+                            </div>
+                          ) : (
+                            /* Fallback for messages without contentParts (user messages or old messages) */
+                            <div
+                              data-message-id={message.id}
+                              className={`break-words ${
+                                message.role === "user"
+                                  ? "text-lg font-medium text-yellow-100 text-left w-full"
+                                  : `text-[15px] text-foreground/90 text-left max-w-none ${animationClass}`
+                              }`}
+                              style={{
+                                lineHeight: message.role === "user" ? "1.5" : "1.8",
+                                whiteSpace: message.role === "user" ? "normal" : "pre-wrap",
+                                wordSpacing: "normal",
+                                letterSpacing: message.role === "user" ? "0" : "0.01em",
+                                textAlign: message.role === "user" ? "left" : "left",
+                                wordBreak: message.role === "user" ? "break-word" : "normal",
+                                overflowWrap: message.role === "user" ? "break-word" : "normal",
+                              } as React.CSSProperties}
+                            >
+                              {message.content && message.content.trim().length > 0 ? formatMessageContent(
+                                message.role === "user"
+                                  ? preventOrphanedWords(
+                                      // Filter out "Imagen 4" or "Imagen" references and generation messages from content
+                                      message.content
+                                        .replace(/\bImagen\s*4\b/gi, '')
+                                        .replace(/\bImagen\b/gi, '')
+                                        .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                        .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                        .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                        .trim()
+                                    )
+                                  : message.content
+                                      .replace(/\bImagen\s*4\b/gi, '')
+                                      .replace(/\bImagen\b/gi, '')
+                                      .replace(/Generated\s+\d+\s+image\(s\)/gi, '')
+                                      .replace(/I've\s+generated\s+\d+\s+image/i, '')
+                                      .replace(/Here's?\s+the\s+generated\s+image/i, '')
+                                      .trim(),
+                                openFile,
+                                handleFileOpen
+                              ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
+                                <ProcessingIndicator />
+                              ) : null}
+                            </div>
+                          )}
+                          {/* Timestamp - only for assistant, hide while streaming */}
+                          {message.role === "assistant" && !isStreaming && (
+                            <div className="flex items-center justify-between gap-3 mt-3">
+                              <div className="text-xs text-muted-foreground/60">
+                                {formatTimestamp(message.timestamp)}
+                              </div>
+                              {/* Action icons */}
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(message.content);
+                                  }}
+                                  className="p-1.5 hover:bg-muted rounded transition-colors"
+                                  title="Copy message"
+                                >
+                                  <Copy className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-foreground" />
+                                </button>
+                                {speakingMessageId === message.id ? (
+                                  <>
+                                    {isPaused ? (
+                                      <button
+                                        onClick={resumeSpeaking}
+                                        className="p-1.5 hover:bg-muted rounded transition-colors"
+                                        title="Resume"
+                                      >
+                                        <Play className="h-3.5 w-3.5 text-primary" />
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={pauseSpeaking}
+                                        className="p-1.5 hover:bg-muted rounded transition-colors"
+                                        title="Pause"
+                                      >
+                                        <Pause className="h-3.5 w-3.5 text-primary" />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={stopSpeaking}
+                                      className="p-1.5 hover:bg-muted rounded transition-colors"
+                                      title="Stop speaking"
+                                    >
+                                      <Volume2 className="h-3.5 w-3.5 text-primary opacity-50" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => speakMessage(message.id, message.content)}
+                                    className="p-1.5 hover:bg-muted rounded transition-colors"
+                                    title="Read aloud"
+                                  >
+                                    <Volume2 className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-foreground" />
+                                  </button>
+                                )}
+                                <button
+                                  className="p-1.5 hover:bg-muted rounded transition-colors"
+                                  title="Good response"
+                                >
+                                  <ThumbsUp className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-green-500" />
+                                </button>
+                                <button
+                                  className="p-1.5 hover:bg-muted rounded transition-colors"
+                                  title="Bad response"
+                                >
+                                  <ThumbsDown className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-red-500" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Timestamp and actions for formatted search, hide while streaming */}
+                      {message.formattedSearch && !isStreaming && (
+                        <div className="flex items-center justify-between gap-3 mt-4">
+                          <div className="text-xs text-muted-foreground/60">
+                            {formatTimestamp(message.timestamp)}
+                          </div>
+                          {/* Action icons */}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(message.content);
+                              }}
+                              className="p-1.5 hover:bg-muted rounded transition-colors"
+                              title="Copy message"
+                            >
+                              <Copy className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-foreground" />
+                            </button>
+                            {speakingMessageId === message.id ? (
+                              <button
+                                onClick={stopSpeaking}
+                                className="p-1.5 hover:bg-muted rounded transition-colors"
+                                title="Stop speaking"
+                              >
+                                <Volume2 className="h-3.5 w-3.5 text-primary" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => speakMessage(message.id, message.content)}
+                                className="p-1.5 hover:bg-muted rounded transition-colors"
+                                title="Read aloud"
+                              >
+                                <Volume2 className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-foreground" />
+                              </button>
+                            )}
+                            <button
+                              className="p-1.5 hover:bg-muted rounded transition-colors"
+                              title="Good response"
+                            >
+                              <ThumbsUp className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-green-500" />
+                            </button>
+                            <button
+                              className="p-1.5 hover:bg-muted rounded transition-colors"
+                              title="Bad response"
+                            >
+                              <ThumbsDown className="h-3.5 w-3.5 text-muted-foreground/70 hover:text-red-500" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  );
+                })}
+                {/* Processing Indicator - only show if no assistant message exists yet (before first tool call or content) */}
+                {isProcessing && (() => {
+                  // Find the last assistant message to check if it exists
+                  const lastAssistantMessage = messages.filter(m => m.role === "assistant").pop();
+                  // Only show bottom indicator if no assistant message exists yet (before message container is created)
+                  return !lastAssistantMessage;
+                })() && (
+                  <div className="flex justify-start mb-6">
+                    <div className="max-w-[85%]">
+                      <ProcessingIndicator />
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
             </div>
             {/* Input Area - Sticky Footer */}
             <div 
@@ -4103,7 +4622,7 @@ export default function Home() {
                 paddingTop: '1rem',
                 paddingLeft: '1rem',
                 paddingRight: '1rem',
-                paddingBottom: 'calc(1rem + max(3rem, env(safe-area-inset-bottom, 3rem)))',
+                paddingBottom: 'calc(1rem + max(5rem, env(safe-area-inset-bottom, 5rem)))',
                 position: 'relative',
               }}
             >
