@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { LocalFileSystem } from "@/lib/storage/local-fs";
 import { auth } from "@clerk/nextjs/server";
 import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
-import type { UserContext } from "@/lib/types/user-context";
+import { logger } from "@/lib/utils/logger";
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,30 +28,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get user context with browser bridge connection status
-    let browserBridgeConnected = false;
-    try {
-      const bridgeManager = getBridgeManager();
-      browserBridgeConnected = bridgeManager.isConnected(authenticatedUserId);
-    } catch (error) {
-      // Continue without bridge connection - not a fatal error
+    // Check if agent is connected
+    const bridgeManager = getBridgeManager();
+    const isAgentConnected = bridgeManager.isConnected(authenticatedUserId);
+
+    if (!isAgentConnected) {
+      logger.error('Agent not connected - refusing to execute on shared server', undefined, {
+        userId: authenticatedUserId,
+        operation: 'fs.write',
+        path,
+      });
+
+      return NextResponse.json(
+        {
+          error: 'Local agent required',
+          message:
+            '⚠️ Local agent required to write files.\n\n' +
+            'Please install and run the local agent to modify YOUR files.',
+        },
+        { status: 403 }
+      );
     }
 
-    const context: UserContext = {
-      userId: authenticatedUserId,
-      workspaceId: undefined,
-      browserBridgeConnected,
-    };
+    // Route to user's local agent
+    try {
+      await bridgeManager.requestBrowserOperation(
+        authenticatedUserId,
+        'fs.write',
+        { path, content, createDirs: true, encoding: 'utf8' }
+      );
 
-    const fileSystem = new LocalFileSystem();
-    await fileSystem.write(path, content, context, true, "utf8");
+      return NextResponse.json({
+        success: true,
+        path,
+      });
+    } catch (error) {
+      logger.error('Agent fs.write failed', undefined, {
+        userId: authenticatedUserId,
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-    return NextResponse.json({
-      success: true,
-      path,
-    });
+      return NextResponse.json(
+        {
+          error: 'Agent operation failed',
+          message: `❌ Failed to write file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        },
+        { status: 500 }
+      );
+    }
   } catch (error) {
-    console.error("Error writing file:", error);
+    logger.error("Filesystem write error", error instanceof Error ? error : undefined);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to write file",

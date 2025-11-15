@@ -4,7 +4,6 @@ import { logger } from "@/lib/utils/logger";
 import { auth } from "@clerk/nextjs/server";
 import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
 import type { UserContext } from "@/lib/types/user-context";
-import { LocalFileSystem } from "@/lib/storage/local-fs";
 
 const requestSchema = z.object({
   path: z.string().min(1, "Path is required"),
@@ -40,55 +39,64 @@ export async function POST(req: NextRequest) {
 
     logger.info("Filesystem list request", { path, depth, userId: context.userId });
 
-    // Get raw entries for file tree (not formatted output)
-    let entries: Array<{ name: string; path: string; kind: string; size?: number; mtime?: string }> = [];
-
-    // Check if browser bridge is connected
+    // Check if agent is connected
     const bridgeManager = getBridgeManager();
-    if (browserBridgeConnected && bridgeManager.isConnected(authenticatedUserId)) {
-      try {
-        const result = await bridgeManager.requestBrowserOperation(
-          authenticatedUserId,
-          'fs.list',
-          { path: path || '.' }
-        ) as Array<{ name: string; kind: string; path: string }>;
-        
-        // Transform browser bridge response to match expected format
-        entries = result.map((entry) => ({
-          name: entry.name,
-          path: entry.path,
-          kind: entry.kind,
-          size: undefined, // Browser API doesn't provide size
-          mtime: undefined, // Browser API doesn't provide mtime
-        }));
-      } catch (error) {
-        logger.warn('Browser bridge failed, falling back to server-side', {
-          userId: authenticatedUserId,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-        // Fall through to server-side implementation
-      }
+    if (!browserBridgeConnected || !bridgeManager.isConnected(authenticatedUserId)) {
+      logger.error('Agent not connected - refusing to execute on shared server', undefined, {
+        userId: authenticatedUserId,
+        operation: 'fs.list',
+        path,
+      });
+
+      return NextResponse.json(
+        {
+          error: 'Local agent required',
+          message:
+            '⚠️ Local agent required but not connected.\n\n' +
+            'To list files, you must install and run the local agent:\n' +
+            '1. Click "Enable Local Environment" in the sidebar\n' +
+            '2. Download and install the local agent\n' +
+            '3. Run the agent with your user ID\n' +
+            '4. Wait for connection confirmation\n\n' +
+            'The local agent runs on YOUR machine to access YOUR files.\n' +
+            'This ensures complete isolation between users.',
+        },
+        { status: 403 }
+      );
     }
 
-    // Server-side fallback (if bridge not used or failed)
-    if (entries.length === 0) {
-      const fileSystem = new LocalFileSystem();
-      const fsEntries = await fileSystem.list(path, context, depth || 0);
-      entries = fsEntries.map((entry) => ({
+    // Route to user's local agent via WebSocket
+    try {
+      const result = await bridgeManager.requestBrowserOperation(
+        authenticatedUserId,
+        'fs.list',
+        { path: path || '.', depth: depth || 0 }
+      ) as Array<{ name: string; kind: string; path: string; size?: number; mtime?: string }>;
+
+      // Transform agent response to expected format
+      const entries = result.map((entry) => ({
         name: entry.name,
         path: entry.path,
         kind: entry.kind,
         size: entry.size,
-        mtime: entry.mtime?.toISOString(),
+        mtime: entry.mtime,
       }));
-    }
 
-    // Ensure entries is always an array
-    if (!Array.isArray(entries)) {
-      entries = [];
-    }
+      return NextResponse.json({ entries });
+    } catch (error) {
+      logger.error('Agent fs.list failed', error instanceof Error ? error : undefined, {
+        userId: authenticatedUserId,
+        path,
+      });
 
-    return NextResponse.json({ entries });
+      return NextResponse.json(
+        {
+          error: 'Agent operation failed',
+          message: `❌ Failed to list files: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check that your local agent is running and the path exists.`,
+        },
+        { status: 500 }
+      );
+    }
   } catch (error) {
     logger.error("Filesystem list error", error instanceof Error ? error : undefined);
 

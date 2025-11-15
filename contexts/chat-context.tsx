@@ -62,20 +62,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!authLoaded) return; // Wait for auth to load
     
-    // If user is not authenticated, clear any existing chats and don't load from localStorage
-    if (!userId) {
-      setChats([]);
-      setActiveChatId(null);
-      // Clear localStorage to prevent stale data
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(ACTIVE_CHAT_KEY);
-      } catch (error) {
-        console.error("Failed to clear localStorage:", error);
+      // If user is not authenticated, clear any existing chats and don't load from localStorage
+      if (!userId) {
+        setChats([]);
+        setActiveChatId(null);
+        // Clear localStorage to prevent stale data
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(ACTIVE_CHAT_KEY);
+          // Also clear any other op15 keys that might be user-specific
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('op15-') || key.startsWith('localEnv'))) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach(key => localStorage.removeItem(key));
+        } catch (error) {
+          console.error("Failed to clear localStorage:", error);
+        }
+        setIsHydrated(true);
+        return;
       }
-      setIsHydrated(true);
-      return;
-    }
 
     // User is authenticated - load chats from localStorage
     try {

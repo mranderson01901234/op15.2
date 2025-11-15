@@ -25,8 +25,13 @@ export async function GET(req: NextRequest) {
     try {
       const agentCode = await readFile(agentPath, 'utf-8');
       
-      // Create installer script that includes the agent code
-      const installerScript = createInstallerScript(agentCode, platform);
+      // Get user ID from header or query params (for auto-download)
+      const userHeader = req.headers.get('X-User-Id');
+      const userQuery = searchParams.get('userId');
+      const userAgentId = userHeader || userQuery || userId; // Use authenticated userId as fallback
+      
+      // Create installer script that includes the agent code and user ID
+      const installerScript = createInstallerScript(agentCode, platform, userAgentId);
       
       const filename = platform === 'win32' 
         ? 'op15-agent-installer.bat' 
@@ -54,22 +59,24 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function createInstallerScript(agentCode: string, platform: string): string {
+function createInstallerScript(agentCode: string, platform: string, userId?: string): string {
   if (platform === 'win32') {
-    return createWindowsInstaller(agentCode);
+    return createWindowsInstaller(agentCode, userId);
   } else {
-    return createUnixInstaller(agentCode);
+    return createUnixInstaller(agentCode, userId);
   }
 }
 
-function createUnixInstaller(agentCode: string): string {
+function createUnixInstaller(agentCode: string, userId?: string): string {
   // Base64 encode the agent code to avoid shell escaping issues
   const agentCodeBase64 = Buffer.from(agentCode).toString('base64');
   const serverUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://your-app.up.railway.app';
+  const preconfiguredUserId = userId || '';
   
   return `#!/bin/bash
 # op15 Local Agent Auto-Installer
 # This script automatically installs and runs the op15 local agent
+# Pre-configured with server URL${preconfiguredUserId ? ' and user ID' : ''}
 
 set -e
 
@@ -77,14 +84,30 @@ echo "🚀 op15 Local Agent Installer"
 echo "================================"
 echo ""
 
-# Get server URL and user ID
+# Get server URL (pre-configured) and user ID
 SERVER_URL="${serverUrl}"
-USER_ID="$1"
+USER_ID="${preconfiguredUserId || '$1'}"
 
+# If no user ID provided, try to get from environment or prompt
 if [ -z "$USER_ID" ]; then
-  echo "Usage: $0 <user-id>"
-  echo "Or set USER_ID environment variable"
-  exit 1
+  if [ -n "$OP15_USER_ID" ]; then
+    USER_ID="$OP15_USER_ID"
+  else
+    echo "⚠️  User ID required"
+    echo ""
+    echo "Please provide your user ID:"
+    echo "  $0 <your-user-id>"
+    echo ""
+    echo "Or set environment variable:"
+    echo "  export OP15_USER_ID=user_xxxxx"
+    echo "  $0"
+    echo ""
+    read -p "Enter your user ID (or press Ctrl+C to cancel): " USER_ID
+    if [ -z "$USER_ID" ]; then
+      echo "❌ User ID is required"
+      exit 1
+    fi
+  fi
 fi
 
 # Create agent directory
@@ -184,17 +207,25 @@ echo ""
 echo "✅ Installation complete!"
 echo "The agent is now running and will automatically connect to your op15 server."
 echo ""
+echo "Your user ID: $USER_ID"
+echo "Server URL: $SERVER_URL"
+echo ""
 echo "To check status:"
 if command -v systemctl &> /dev/null; then
   echo "  sudo systemctl status op15-agent"
+  echo "  sudo journalctl -u op15-agent -f"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
   echo "  launchctl list | grep op15"
+  echo "  log show --predicate 'process == \"op15-agent\"' --last 1h"
 fi
+echo ""
+echo "The agent will automatically start on system boot/login."
 `;
 }
 
-function createWindowsInstaller(agentCode: string): string {
+function createWindowsInstaller(agentCode: string, userId?: string): string {
   const serverUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://your-app.up.railway.app';
+  const preconfiguredUserId = userId || '';
   
   // Escape for Windows batch file
   const escapedCode = agentCode
@@ -207,6 +238,7 @@ function createWindowsInstaller(agentCode: string): string {
   return `@echo off
 REM op15 Local Agent Auto-Installer for Windows
 REM This script automatically installs and runs the op15 local agent
+REM Pre-configured with server URL${preconfiguredUserId ? ' and user ID' : ''}
 
 echo 🚀 op15 Local Agent Installer
 echo ================================
@@ -214,12 +246,28 @@ echo.
 
 REM Get server URL and user ID
 set SERVER_URL=${serverUrl}
-set USER_ID=%1
+set USER_ID=${preconfiguredUserId ? preconfiguredUserId : '%1'}
 
+REM If no user ID provided, try to get from environment or prompt
 if "%USER_ID%"=="" (
-  echo Usage: %0 ^<user-id^>
-  echo Or set USER_ID environment variable
-  exit /b 1
+  if not "%OP15_USER_ID%"=="" (
+    set USER_ID=%OP15_USER_ID%
+  ) else (
+    echo ⚠️  User ID required
+    echo.
+    echo Please provide your user ID:
+    echo   %0 ^<your-user-id^>
+    echo.
+    echo Or set environment variable:
+    echo   set OP15_USER_ID=user_xxxxx
+    echo   %0
+    echo.
+    set /p USER_ID="Enter your user ID (or press Ctrl+C to cancel): "
+    if "%USER_ID%"=="" (
+      echo ❌ User ID is required
+      exit /b 1
+    )
+  )
 )
 
 REM Create agent directory

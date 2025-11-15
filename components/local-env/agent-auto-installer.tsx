@@ -108,15 +108,15 @@ export function AgentAutoInstaller() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      // Mark as installed
-      localStorage.setItem("op15-agent-installed", "true");
+      // Mark as downloaded/installed
+      localStorage.setItem("op15-agent-installed", "downloaded");
       setIsInstalled(true);
 
-      // Show instructions with user ID
+      // Show streamlined instructions
       const instructions =
         platform === "win32"
-          ? `Installer downloaded!\n\nRun as administrator:\nop15-agent-installer.bat ${user.id}\n\nOr double-click and enter your user ID when prompted.`
-          : `Installer downloaded!\n\nRun:\nchmod +x op15-agent-installer.sh\n./op15-agent-installer.sh ${user.id}\n\nThe agent will automatically start and connect to your account.`;
+          ? `✅ Installer downloaded!\n\nTo complete installation:\n1. Open Downloads folder\n2. Double-click op15-agent-installer.bat\n3. Enter your user ID: ${user.id}\n\nOr run in terminal:\nop15-agent-installer.bat ${user.id}`
+          : `✅ Installer downloaded!\n\nTo complete installation:\n1. Open terminal\n2. Run: chmod +x ~/Downloads/op15-agent-installer.sh\n3. Run: ~/Downloads/op15-agent-installer.sh ${user.id}\n\nOr double-click the file and run in terminal.`;
 
       alert(instructions);
       

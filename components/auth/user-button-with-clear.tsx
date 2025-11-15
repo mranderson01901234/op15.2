@@ -50,6 +50,20 @@ export function UserButtonWithClear() {
       try {
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(ACTIVE_CHAT_KEY);
+        // Clear all op15-related keys
+        localStorage.removeItem('op15-local-env-enabled');
+        localStorage.removeItem('op15-agent-installed');
+        localStorage.removeItem('localEnvSelectedDir');
+        localStorage.removeItem('localEnvUserId');
+        // Clear any other op15 keys
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('op15-') || key.startsWith('localEnv'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
       } catch (error) {
         console.error("Failed to clear localStorage on sign out:", error);
       }
