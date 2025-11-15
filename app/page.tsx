@@ -2621,10 +2621,14 @@ export default function Home() {
       if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
         console.log('[Scroll Debug] Page load scroll triggered', { messagesCount: messages.length });
       }
-      // Wait for DOM to be ready
+      // Wait longer for DOM to be fully ready - use multiple RAFs + timeout
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          scrollToBottom(true);
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              scrollToBottom(true);
+            }, 200); // Longer delay for initial render
+          });
         });
       });
     }
