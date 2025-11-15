@@ -2525,62 +2525,72 @@ export default function Home() {
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
   };
 
+  // Simple, reliable scroll to bottom function
   const scrollToBottom = (immediate = false) => {
-    const attemptScroll = (attempt = 0) => {
-      const container = messagesContainerRef.current;
-      const endElement = messagesEndRef.current;
-      
-      if (!container || !endElement) {
-        if (attempt < 10) {
-          requestAnimationFrame(() => attemptScroll(attempt + 1));
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    const scroll = () => {
+      if (container.scrollHeight > container.clientHeight) {
+        if (immediate) {
+          container.scrollTop = container.scrollHeight;
+        } else {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: "smooth"
+          });
         }
-        return;
-      }
-      
-      // Wait for container to have dimensions
-      if (container.scrollHeight === 0 || container.clientHeight === 0) {
-        if (attempt < 20) {
-          requestAnimationFrame(() => attemptScroll(attempt + 1));
-        }
-        return;
-      }
-      
-      // Scroll to bottom
-      if (immediate) {
-        container.scrollTop = container.scrollHeight;
-      } else {
-        endElement.scrollIntoView({ behavior: "smooth" });
       }
     };
     
-    attemptScroll(0);
+    // Try immediately
+    scroll();
+    
+    // Retry if container not ready (up to 30 frames = ~500ms)
+    let attempts = 0;
+    const retry = () => {
+      attempts++;
+      if (container.scrollHeight === 0 && attempts < 30) {
+        requestAnimationFrame(retry);
+      } else {
+        scroll();
+      }
+    };
+    requestAnimationFrame(retry);
   };
 
-  // Track if we've scrolled on initial load
+  // Track last message count to detect new messages
+  const lastMessageCountRef = useRef(0);
   const hasScrolledOnLoadRef = useRef(false);
 
-  // Auto-scroll to bottom on initial page load (when messages first appear)
+  // Auto-scroll to bottom on page load
   useEffect(() => {
-    if (!hasScrolledOnLoadRef.current && messages.length > 0 && !isLoading && !isProcessing) {
+    if (messages.length > 0 && !hasScrolledOnLoadRef.current && !isLoading && !isProcessing) {
       hasScrolledOnLoadRef.current = true;
-      // Small delay to ensure DOM is ready
-      const timeoutId = setTimeout(() => {
-        scrollToBottom(true); // Immediate scroll on load
-      }, 100);
-      return () => clearTimeout(timeoutId);
+      // Use double RAF + small delay for DOM readiness
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => scrollToBottom(true), 50);
+        });
+      });
     }
   }, [messages.length, isLoading, isProcessing]);
 
-  // Auto-scroll when user sends a message - scroll immediately when user message is added
+  // Auto-scroll when new user message is added
   useEffect(() => {
-    if (messages.length > 0) {
+    if (messages.length > lastMessageCountRef.current) {
       const lastMessage = messages[messages.length - 1];
-      // Scroll immediately when user message is added (before loading starts)
       if (lastMessage && lastMessage.role === "user") {
-        scrollToBottom();
+        // Scroll immediately when user sends message
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollToBottom(false);
+          });
+        });
       }
+      lastMessageCountRef.current = messages.length;
     }
-  }, [messages.length]); // Only depend on messages.length, not loading state
+  }, [messages.length]);
 
   // Track if we've already scrolled to user message to prevent repeated scrolling
   const hasScrolledToUserMessageRef = useRef(false);
