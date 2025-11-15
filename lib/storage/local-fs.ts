@@ -244,7 +244,7 @@ export class LocalFileSystem implements FileSystem {
         }
         
         // Check if this might be because agent isn't connected
-        const needsAgent = !context.userHomeDirectory && workspaceRoot === '/';
+        const needsAgent = !context.userHomeDirectory && context.workspaceRoot === '/';
         const suggestion = needsAgent 
           ? ' Note: To access your local filesystem, please connect the local agent or browser bridge.'
           : '';

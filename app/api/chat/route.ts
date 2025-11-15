@@ -489,8 +489,8 @@ REMEMBER: The workspace root shown above (${currentWorkspaceRoot}) is the ONLY c
             },
             ragStoreNames || undefined,
             context.workspaceRoot || '/',
-            context.restrictionLevel || undefined,
-            context.userHomeDirectory || undefined
+            context.restrictionLevel,
+            context.userHomeDirectory
           )) {
             let data: string;
 
