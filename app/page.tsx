@@ -28,6 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Thumbnail {
   src: string;
@@ -2033,10 +2035,11 @@ export default function Home() {
   const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const scrollAnimationFrameRef = useRef<number | null>(null);
-  const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser } = useWorkspace();
+  const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser, activeMobilePanel } = useWorkspace();
   const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
   const { setInsertTextHandler, setSendMessageHandler, sendMessage } = useChatInput();
   const { userId, isLoaded: authLoaded } = useAuth();
+  const isMobile = useIsMobile();
 
   // Helper function to determine error reason from error message
   const getFileErrorReason = (errorMessage: string, filePath: string): { reason: string; message: string } => {
@@ -3274,14 +3277,16 @@ export default function Home() {
 
   return (
     <>
-    <SplitView>
-      <div 
-        className="flex flex-col bg-background overflow-hidden relative"
-        style={{
-          height: '100%',
-          minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
-        }}
-      >
+      {/* Desktop Layout - hidden on mobile */}
+      <div className="hidden md:block h-full">
+        <SplitView>
+          <div 
+            className="flex flex-col bg-background overflow-hidden relative"
+            style={{
+              height: '100%',
+              minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
+            }}
+          >
         <style dangerouslySetInnerHTML={{
           __html: `
             @keyframes fadeIn {
@@ -4005,34 +4010,251 @@ export default function Home() {
     ) : (
       <CodeMirrorEditor />
     )}
-    </SplitView>
-    <Dialog open={!!fileError} onOpenChange={(open) => !open && setFileError(null)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            {fileError?.reason || 'Error Opening File'}
-          </DialogTitle>
-          <DialogDescription className="pt-2">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                {fileError?.message}
-              </p>
-              <div className="mt-3 pt-3 border-t border-border/50">
-                <p className="text-xs text-muted-foreground font-mono break-all">
-                  {fileError?.path}
-                </p>
+        </SplitView>
+      </div>
+
+      {/* Mobile Layout - hidden on desktop */}
+      <div className="flex md:hidden h-full flex-col pb-16">
+        {activeMobilePanel === "chat" && (
+          <div className="flex h-full flex-col bg-background overflow-hidden relative">
+            <style dangerouslySetInnerHTML={{
+              __html: `
+                @keyframes fadeIn {
+                  from {
+                    opacity: 0;
+                    transform: translateY(10px);
+                  }
+                  to {
+                    opacity: 1;
+                    transform: translateY(0);
+                  }
+                }
+                @keyframes fadeInAssistant {
+                  from {
+                    opacity: 0;
+                  }
+                  to {
+                    opacity: 1;
+                  }
+                }
+                @keyframes fadeInContent {
+                  from {
+                    opacity: 0;
+                  }
+                  to {
+                    opacity: 1;
+                  }
+                }
+                @keyframes fadeInTopToBottom {
+                  from {
+                    opacity: 0;
+                    clip-path: inset(0 0 100% 0);
+                  }
+                  to {
+                    opacity: 1;
+                    clip-path: inset(0 0 0 0);
+                  }
+                }
+                @keyframes fadeInLeftToRight {
+                  from {
+                    opacity: 0;
+                    clip-path: inset(0 100% 0 0);
+                  }
+                  to {
+                    opacity: 1;
+                    clip-path: inset(0 0 0 0);
+                  }
+                }
+                @keyframes fadeInFull {
+                  from {
+                    opacity: 0;
+                  }
+                  to {
+                    opacity: 1;
+                  }
+                }
+                .assistant-content-fade-full {
+                  animation: fadeInFull 1.2s ease-in-out forwards;
+                }
+                .assistant-content-fade-top-bottom {
+                  animation: fadeInTopToBottom 1.8s ease-in-out forwards;
+                }
+                .assistant-content-fade-left-right {
+                  animation: fadeInLeftToRight 1.8s ease-in-out forwards;
+                }
+              `
+            }} />
+            {/* Local Environment Status - Top Left */}
+            <div className="absolute top-4 left-4 z-10">
+              <LocalEnvConnector />
+            </div>
+            {/* Messages Area - Scrollable */}
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 premium-scrollbar">
+            {messages.length === 0 ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-yellow-100 text-sm">Start a conversation...</p>
+              </div>
+            ) : null}
+            </div>
+            {/* Input Area - Sticky Footer */}
+            <div 
+              className="flex-shrink-0 border-t border-background bg-background relative z-10 mobile-safari-input-fix"
+              style={{
+                paddingTop: '1rem',
+                paddingLeft: '1rem',
+                paddingRight: '1rem',
+                paddingBottom: 'calc(1rem + max(3rem, env(safe-area-inset-bottom, 3rem)))',
+                position: 'relative',
+              }}
+            >
+              <div className="relative mx-auto max-w-5xl w-full space-y-2">
+                {isMounted && attachedPDFs.length > 0 && (
+                  <div className="flex flex-wrap gap-2 pb-2">
+                    {attachedPDFs.map((pdf, index) => {
+                      const pdfKey = pdf.data ? `${pdf.type}-${pdf.data.substring(0, 20)}-${index}` : `pdf-${index}`;
+                      return (
+                        <div
+                          key={pdfKey}
+                          className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md text-xs"
+                        >
+                          <span className="truncate max-w-[150px]" title={pdf.displayName}>
+                            {pdf.displayName || `PDF ${index + 1}`}
+                          </span>
+                          <button
+                            onClick={() => {
+                              const updated = attachedPDFs.filter((_, i) => i !== index);
+                              setAttachedPDFs(updated);
+                            }}
+                            className="hover:text-destructive transition-colors shrink-0"
+                            disabled={isLoading}
+                            aria-label="Remove PDF"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="relative">
+                  <Textarea
+                    ref={textareaRef}
+                    placeholder="Type your message..."
+                    className="min-h-[60px] max-h-[200px] resize-none pl-14 pr-20 py-3 leading-normal text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                    style={{
+                      wordWrap: 'break-word',
+                      overflowWrap: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: '1.5',
+                    }}
+                    rows={1}
+                    value={input}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                      autoResizeTextarea();
+                    }}
+                    onKeyDown={handleKeyDown}
+                    disabled={isLoading || !authLoaded || !userId}
+                  />
+                  <ArrowUp
+                    onClick={() => handleSubmit()}
+                    className={`absolute top-1/2 -translate-y-1/2 left-3 h-6 w-6 text-orange-500 transition-opacity ${
+                      isLoading || !authLoaded || !userId || (!input.trim() && attachedPDFs.length === 0)
+                        ? "cursor-not-allowed opacity-50"
+                        : "cursor-pointer hover:opacity-80"
+                    }`}
+                  />
+                  <div className="absolute top-1/2 -translate-y-1/2 right-3 flex items-center gap-2">
+                    <CommandsButton className="h-8 w-8 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-accent transition-all duration-200" />
+                    <PDFUploadIcon
+                      onPDFsChange={setAttachedPDFs}
+                      existingPDFs={attachedPDFs}
+                      maxFiles={5}
+                      uploading={uploadingPDFs}
+                      onUploadingChange={setUploadingPDFs}
+                      disabled={!authLoaded || !userId}
+                    />
+                    <SignedIn>
+                      {!editorState.isOpen && <UserButtonWithClear />}
+                    </SignedIn>
+                  </div>
+                </div>
               </div>
             </div>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button onClick={() => setFileError(null)} variant="default">
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </div>
+        )}
+
+        {activeMobilePanel === "files" && (
+          <div className="flex h-full items-center justify-center p-4 bg-background">
+            <p className="text-muted-foreground">Files panel - access via sidebar</p>
+          </div>
+        )}
+
+        {activeMobilePanel === "editor" && editorState.isOpen && (
+          <CodeMirrorEditor />
+        )}
+
+        {activeMobilePanel === "image" && imageState.isOpen && imageState.imageUrl && (
+          <ImageViewer imageUrl={imageState.imageUrl} onClose={closeImage} />
+        )}
+
+        {activeMobilePanel === "video" && videoState.isOpen && videoState.videoUrl && (
+          <VideoViewer
+            videoUrl={videoState.videoUrl}
+            videoTitle={videoState.videoTitle}
+            onClose={closeVideo}
+          />
+        )}
+
+        {activeMobilePanel === "browser" && browserState.isOpen && (
+          browserState.sid ? (
+            <BrowserPanel
+              sid={browserState.sid}
+              allowExecute={true}
+              onClose={closeBrowser}
+            />
+          ) : browserState.url ? (
+            <BrowserViewer
+              url={browserState.url}
+              title={browserState.title}
+              onClose={closeBrowser}
+            />
+          ) : null
+        )}
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav />
+
+      {/* File Error Dialog */}
+      <Dialog open={!!fileError} onOpenChange={(open) => !open && setFileError(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              {fileError?.reason || 'Error Opening File'}
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {fileError?.message}
+                </p>
+                <div className="mt-3 pt-3 border-t border-border/50">
+                  <p className="text-xs text-muted-foreground font-mono break-all">
+                    {fileError?.path}
+                  </p>
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setFileError(null)} variant="default">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
