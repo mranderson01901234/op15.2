@@ -160,7 +160,13 @@ export default function RootLayout({
               <ChatInputProvider>
                 <SidebarProvider>
                   <AppSidebar />
-                  <SidebarInset className="flex flex-col h-screen">
+                  <SidebarInset 
+                    className="flex flex-col"
+                    style={{
+                      height: '100vh',
+                      minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
+                    }}
+                  >
                     {children}
                   </SidebarInset>
                 </SidebarProvider>

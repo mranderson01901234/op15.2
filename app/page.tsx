@@ -3275,7 +3275,13 @@ export default function Home() {
   return (
     <>
     <SplitView>
-      <div className="flex h-full flex-col bg-background overflow-hidden relative">
+      <div 
+        className="flex flex-col bg-background overflow-hidden relative"
+        style={{
+          height: '100%',
+          minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
+        }}
+      >
         <style dangerouslySetInnerHTML={{
           __html: `
             @keyframes fadeIn {
@@ -3348,7 +3354,13 @@ export default function Home() {
           <LocalEnvConnector />
         </div>
         {/* Messages Area - Scrollable */}
-        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 premium-scrollbar">
+        <div 
+          ref={messagesContainerRef} 
+          className="flex-1 overflow-y-auto p-4 premium-scrollbar"
+          style={{
+            minHeight: 0, // Ensure flex child can shrink below content size
+          }}
+        >
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-yellow-100 text-sm">Start a conversation...</p>
@@ -3871,9 +3883,10 @@ export default function Home() {
 
       {/* Input Area - Sticky Footer */}
       <div 
-        className="flex-shrink-0 border-t border-background bg-background p-4"
+        className="flex-shrink-0 border-t border-background bg-background p-4 relative z-10"
         style={{
           paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))',
+          position: 'relative',
         }}
       >
         <div className="relative mx-auto max-w-5xl w-full space-y-2">
