@@ -2527,33 +2527,64 @@ export default function Home() {
 
   // Reliable scroll to bottom function
   const scrollToBottom = (immediate = false) => {
-    const attemptScroll = (attempt = 0) => {
+    let attempt = 0;
+    const maxAttempts = 100; // Much more retries - up to ~1.6 seconds
+    
+    const attemptScroll = () => {
+      attempt++;
       const container = messagesContainerRef.current;
+      
       if (!container) {
         if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
-          if (attempt === 0) console.log('[Scroll Debug] Container ref not available, retrying...');
+          if (attempt === 1 || attempt % 10 === 0) {
+            console.log('[Scroll Debug] Container ref not available, retrying...', { attempt });
+          }
         }
-        if (attempt < 20) {
-          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        if (attempt < maxAttempts) {
+          requestAnimationFrame(attemptScroll);
+        } else {
+          if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+            console.warn('[Scroll Debug] Failed to scroll - container ref never available', { attempt });
+          }
         }
         return;
       }
       
-      // Wait for container to have content
-      if (container.scrollHeight === 0 || container.clientHeight === 0) {
+      // Wait for container to have content AND be visible
+      const hasContent = container.scrollHeight > 0;
+      const hasDimensions = container.clientHeight > 0;
+      const isVisible = container.offsetHeight > 0;
+      
+      if (!hasContent || !hasDimensions || !isVisible) {
         if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
-          if (attempt === 0) console.log('[Scroll Debug] Container not ready, retrying...', {
-            scrollHeight: container.scrollHeight,
-            clientHeight: container.clientHeight
-          });
+          if (attempt === 1 || attempt % 10 === 0) {
+            console.log('[Scroll Debug] Container not ready, retrying...', {
+              attempt,
+              scrollHeight: container.scrollHeight,
+              clientHeight: container.clientHeight,
+              offsetHeight: container.offsetHeight,
+              hasContent,
+              hasDimensions,
+              isVisible
+            });
+          }
         }
-        if (attempt < 30) {
-          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        if (attempt < maxAttempts) {
+          requestAnimationFrame(attemptScroll);
+        } else {
+          if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+            console.warn('[Scroll Debug] Failed to scroll - container never ready', {
+              attempt,
+              scrollHeight: container.scrollHeight,
+              clientHeight: container.clientHeight,
+              offsetHeight: container.offsetHeight
+            });
+          }
         }
         return;
       }
       
-      // Scroll to bottom
+      // Container is ready - scroll to bottom
       const targetScroll = container.scrollHeight - container.clientHeight;
       if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
         console.log('[Scroll Debug] Scrolling to bottom', {
@@ -2576,7 +2607,7 @@ export default function Home() {
       }
     };
     
-    attemptScroll(0);
+    attemptScroll();
   };
 
   // Track last message count to detect new messages
