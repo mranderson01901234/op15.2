@@ -3549,7 +3549,7 @@ export default function Home() {
         activeElement.tagName === 'INPUT' ||
         activeElement.tagName === 'TEXTAREA' ||
         activeElement.getAttribute('contenteditable') === 'true' ||
-        activeElement.isContentEditable
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable)
       )) {
         // User clicked into another input - allow it
         return;
@@ -3583,7 +3583,7 @@ export default function Home() {
         activeElement.tagName === 'INPUT' ||
         activeElement.tagName === 'TEXTAREA' ||
         activeElement.getAttribute('contenteditable') === 'true' ||
-        activeElement.isContentEditable
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable)
       )) {
         return;
       }
