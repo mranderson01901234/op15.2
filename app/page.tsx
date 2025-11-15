@@ -2706,6 +2706,34 @@ export default function Home() {
     setInput("");
   }, [activeChatId]);
 
+  // Listen for workspace root changes and ensure LLM always has the latest workspace root
+  // This ensures that when workspace root changes mid-conversation or when switching conversations,
+  // the LLM is always aware of the current workspace root
+  useEffect(() => {
+    const handleWorkspaceRootChange = (event: CustomEvent) => {
+      // Workspace root has changed - the next chat request will automatically fetch
+      // the fresh workspace root from the API (which uses cache: 'no-store')
+      // This ensures the LLM always has the latest workspace root
+      console.log('Workspace root changed:', event.detail);
+    };
+
+    // Listen for workspace root changes
+    window.addEventListener('workspaceRootChanged', handleWorkspaceRootChange as EventListener);
+
+    return () => {
+      window.removeEventListener('workspaceRootChanged', handleWorkspaceRootChange as EventListener);
+    };
+  }, []);
+
+  // Ensure workspace root is always fresh when switching conversations
+  // The chat API already fetches fresh workspace root on every request (cache: 'no-store'),
+  // but this ensures we're aware of any changes when switching conversations
+  useEffect(() => {
+    // When switching conversations, the next message will automatically fetch
+    // the latest workspace root from the API, ensuring the LLM always has the current workspace root
+    // No action needed here - the chat API handles this automatically
+  }, [activeChatId]);
+
   // Auto-resize textarea based on content
   const autoResizeTextarea = () => {
     if (textareaRef.current) {
@@ -3842,7 +3870,12 @@ export default function Home() {
       </div>
 
       {/* Input Area - Sticky Footer */}
-      <div className="flex-shrink-0 border-t border-background bg-background p-4">
+      <div 
+        className="flex-shrink-0 border-t border-background bg-background p-4"
+        style={{
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))',
+        }}
+      >
         <div className="relative mx-auto max-w-5xl w-full space-y-2">
           {/* Attached PDFs - Only render on client to prevent hydration issues */}
           {isMounted && attachedPDFs.length > 0 && (

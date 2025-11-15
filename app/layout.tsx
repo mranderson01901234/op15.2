@@ -43,6 +43,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: 'cover', // Enable safe-area-inset support for iOS
 };
 
 export default function RootLayout({
