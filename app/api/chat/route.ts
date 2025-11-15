@@ -9,6 +9,8 @@ import { extractPDFReferences, readPDFFromFilesystem } from "@/lib/pdf/utils";
 import type { PDFContent } from "@/lib/pdf/types";
 import { MemoryIndex } from "@/lib/index/memory-index";
 import { auth } from "@clerk/nextjs/server";
+import { detectImageGenerationRequest } from "@/lib/utils/image-generation-detector";
+import { getBridgeManager } from "@/lib/infrastructure/bridge-manager";
 
 const requestSchema = z.object({
   message: z.string().min(1, "Message is required"),
@@ -70,20 +72,54 @@ export async function POST(req: NextRequest) {
       
       if (workspaceResponse.ok) {
         const workspaceConfig = await workspaceResponse.json();
-        workspaceRoot = workspaceConfig.workspaceRoot || '/'; // Default: '/' (universal)
         restrictionLevel = workspaceConfig.restrictionLevel || 'unrestricted';
         // userHomeDirectory is fetched fresh from agent each time (user-specific)
         userHomeDirectory = workspaceConfig.userHomeDirectory;
+        
+        // Set workspace root based on restriction level
+        if (restrictionLevel === 'home') {
+          // For home restriction, use user's home directory
+          workspaceRoot = userHomeDirectory || '/';
+        } else if (restrictionLevel === 'custom') {
+          // For custom restriction, use the custom workspace root
+          workspaceRoot = workspaceConfig.workspaceRoot || '/';
+        } else {
+          // For unrestricted, use filesystem root
+          workspaceRoot = '/';
+        }
+        
+        // Log the workspace root being used for debugging
+        logger.info('Workspace config loaded for chat request', {
+          userId: authenticatedUserId,
+          restrictionLevel,
+          workspaceRoot,
+          userHomeDirectory,
+          configWorkspaceRoot: workspaceConfig.workspaceRoot,
+        });
+      } else {
+        logger.warn('Failed to load workspace config', {
+          status: workspaceResponse.status,
+          statusText: workspaceResponse.statusText,
+        });
       }
     } catch (error) {
       logger.warn('Failed to load workspace config', { error: error instanceof Error ? error.message : String(error) });
       // Use defaults: '/' root (universal), no restrictions
     }
     
+    // Check if agent is actually connected (for routing exec.run commands)
+    const bridgeManager = getBridgeManager();
+    const isAgentConnected = bridgeManager.isConnected(authenticatedUserId);
+    
+    logger.debug('Agent connection status', {
+      userId: authenticatedUserId,
+      isAgentConnected,
+    });
+    
     const context: UserContext = {
       userId: authenticatedUserId,
       workspaceId: undefined,
-      browserBridgeConnected: false, // Browser bridge removed - only agent is used
+      browserBridgeConnected: isAgentConnected, // ✅ Check actual agent connection status
       workspaceRoot,
       restrictionLevel,
       userHomeDirectory,
@@ -110,6 +146,54 @@ export async function POST(req: NextRequest) {
       hasUploadedPDFs: !!uploadedPDFs?.length,
       ragStoreCount: ragStoreNames?.length || 0,
     });
+
+    // Check if this is an image generation request - generate image first, then let LLM process
+    const imagePrompt = detectImageGenerationRequest(message);
+    let generatedImage: { dataUrl: string; mimeType: string } | null = null;
+    
+    if (imagePrompt) {
+      logger.info("Image generation request detected", { prompt: imagePrompt });
+      
+      // Call imagen API directly
+      try {
+        const imagenResponse = await fetch(`${req.nextUrl.origin}/api/imagen/generate`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Cookie": req.headers.get("cookie") || "",
+          },
+          body: JSON.stringify({
+            prompt: imagePrompt,
+            numberOfImages: 1,
+            aspectRatio: "1:1",
+            imageSize: "1K",
+            outputMimeType: "image/jpeg",
+          }),
+        });
+
+        if (!imagenResponse.ok) {
+          const errorData = await imagenResponse.json().catch(() => ({ error: "Unknown error" }));
+          throw new Error(errorData.error || "Failed to generate image");
+        }
+
+        const imagenData = await imagenResponse.json();
+        const images = imagenData.images || [];
+
+        if (images.length > 0 && images[0]?.dataUrl) {
+          generatedImage = {
+            dataUrl: images[0].dataUrl,
+            mimeType: images[0].mimeType || "image/jpeg",
+          };
+          logger.info("Image generated successfully", { hasImage: !!generatedImage });
+        } else {
+          throw new Error("No images returned from imagen API");
+        }
+      } catch (error) {
+        logger.error("Image generation failed", error instanceof Error ? error : undefined);
+        // Continue with LLM processing even if image generation failed
+        // The LLM can handle the error message
+      }
+    }
 
     // Extract PDF references from message (if user mentions PDF paths)
     const pdfPaths = extractPDFReferences(message);
@@ -151,46 +235,74 @@ export async function POST(req: NextRequest) {
             images?: Array<{ dataUrl: string; mimeType: string }>;
           }> = [];
           
-          // Add conversation history if provided
-          // Also check if workspace root has changed since last message
-          let previousWorkspaceRoot: string | undefined;
+          // Build workspace root info that will be injected into every message
+          // CRITICAL: This ensures the LLM always has the latest workspace root, even when:
+          // - Workspace root changes mid-conversation
+          // - User switches between conversations
+          // - Workspace root is updated in the UI
+          // The workspace root is fetched fresh on every request (cache: 'no-store') above
+          const currentWorkspaceRoot = context.workspaceRoot || '/';
+          const workspaceInfo = `🚨🚨🚨 CRITICAL WORKSPACE INFORMATION - READ THIS FIRST 🚨🚨🚨
+
+CURRENT WORKSPACE ROOT: ${currentWorkspaceRoot}
+RESTRICTION LEVEL: ${context.restrictionLevel || 'unrestricted'}
+
+ABSOLUTE RULES - THESE OVERRIDE EVERYTHING ELSE:
+1. When asked "which directory are we in" or "what directory are we in" or "current directory" or similar questions:
+   → ALWAYS answer: "${currentWorkspaceRoot}"
+   → DO NOT check conversation history
+   → DO NOT use any directory information from previous messages
+   → The answer is ALWAYS: ${currentWorkspaceRoot}
+
+2. This is the CURRENT working directory for ALL operations
+3. IGNORE any directory information from previous messages in this conversation
+4. All file operations (fs.list, fs.read, fs.write, exec.run, etc.) should use paths relative to: ${currentWorkspaceRoot}
+5. If the user asks about the directory, the answer is ALWAYS: ${currentWorkspaceRoot}
+
+REMEMBER: The workspace root shown above (${currentWorkspaceRoot}) is the ONLY correct answer for "which directory are we in" questions.`;
+          
+          // Add conversation history if provided, injecting workspace root info into each user message
           if (history && history.length > 0) {
-            // Extract workspace root from last assistant message if it mentioned one
-            // This is a heuristic - we'll also inject a workspace root change message
             for (const msg of history) {
-              messages.push({
-                role: msg.role,
-                content: msg.content,
-                images: msg.images,
-              });
+              if (msg.role === 'user') {
+                // Inject workspace root info into every user message to ensure it's always visible
+                messages.push({
+                  role: msg.role,
+                  content: `${workspaceInfo}\n\n${msg.content}`,
+                  images: msg.images,
+                });
+              } else {
+                // Keep assistant messages as-is
+                messages.push({
+                  role: msg.role,
+                  content: msg.content,
+                  images: msg.images,
+                });
+              }
             }
           }
           
-          // Inject workspace root info into every message so AI always sees current workspace root
-          // This ensures workspace root changes are immediately reflected in the conversation
+          // Build current message content with workspace root info
           let currentMessageContent = message;
           
-          // Prepend workspace root info to current message to ensure AI sees it
-          if (context.workspaceRoot && context.workspaceRoot !== '/') {
-            const workspaceInfo = `[Workspace Root: ${context.workspaceRoot} - All commands execute in this directory]`;
-            if (editorState?.isOpen && editorState?.filePath) {
-              currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${workspaceInfo}\n\n${message}`;
-            } else {
-              currentMessageContent = `${workspaceInfo}\n\n${message}`;
-            }
+          // Always prepend workspace root info to current message
+          if (editorState?.isOpen && editorState?.filePath) {
+            currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${workspaceInfo}\n\n${message}`;
           } else {
-            // Build current message content - include editor state if file is open
-            if (editorState?.isOpen && editorState?.filePath) {
-              currentMessageContent = `[Editor Context: A file is currently open in the editor at path: ${editorState.filePath}]\n\n${message}`;
-            }
+            currentMessageContent = `${workspaceInfo}\n\n${message}`;
           }
           
           // Add current message with PDFs and images
+          // If we generated an image, include it in the message so LLM can see it
+          const messageImages = generatedImage 
+            ? [...(currentMessageImages || []), generatedImage]
+            : currentMessageImages;
+          
           messages.push({
             role: "user" as const,
             content: currentMessageContent,
             pdfs: allPDFs.length > 0 ? allPDFs : undefined,
-            images: currentMessageImages,
+            images: messageImages,
           });
 
           let fsListContent: string | null = null;
@@ -206,8 +318,18 @@ export async function POST(req: NextRequest) {
           logger.info("Starting stream", { 
             message: message.substring(0, 50), 
             isListFilesRequest,
-            messageCount: messages.length 
+            messageCount: messages.length,
+            hasGeneratedImage: !!generatedImage
           });
+          
+          // If we generated an image, send it to the frontend immediately
+          if (generatedImage) {
+            const imageGeneratedData = `data: ${JSON.stringify({
+              type: "image_generated",
+              imageUrl: generatedImage.dataUrl,
+            })}\n\n`;
+            controller.enqueue(encoder.encode(imageGeneratedData));
+          }
           
           try {
             for await (const chunk of client.streamChat(
@@ -366,7 +488,9 @@ export async function POST(req: NextRequest) {
               return result;
             },
             ragStoreNames,
-            context.workspaceRoot // Pass current workspace root to inject into system prompt
+            context.workspaceRoot || '/', // Pass current workspace root to inject into system prompt (always pass, default to '/')
+            context.restrictionLevel, // Pass restriction level (unrestricted, home, custom)
+            context.userHomeDirectory // Pass user home directory for home restriction level
           )) {
             let data: string;
 

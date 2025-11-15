@@ -10,78 +10,62 @@ const executor: ToolExecutor = new SimpleToolExecutor();
 
 /**
  * Handle exec.run tool call
- * For browser bridge users: syncs workspace to cloud temp directory, executes, then cleans up
- * For direct server access: executes directly
+ * Routes commands to user's local agent when connected, otherwise executes on server
  */
 export async function handleExecRun(
   args: { command: string; cwd?: string; timeoutMs?: number },
   context: UserContext
 ) {
-  // Check if browser bridge is connected
   const bridgeManager = getBridgeManager();
-  if (context.browserBridgeConnected && bridgeManager.isConnected(context.userId)) {
+  
+  // Check if agent is connected (regardless of browserBridgeConnected flag for safety)
+  const isAgentConnected = bridgeManager.isConnected(context.userId);
+  
+  if (isAgentConnected) {
     try {
-      logger.debug('Using browser bridge for exec.run', {
+      logger.debug('Routing exec.run to agent', {
         userId: context.userId,
         command: args.command,
+        cwd: args.cwd || context.workspaceRoot,
       });
 
-      // Request browser to sync workspace
-      await bridgeManager.requestBrowserOperation(
+      // Route command to user's local agent via WebSocket
+      const result = await bridgeManager.requestBrowserOperation(
         context.userId,
         'exec.run',
-        { command: args.command }
-      );
-
-      // Wait a moment for sync to complete
-      // In production, use a proper queue/event system
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Get workspace path from global store (set by /api/workspace/sync)
-      let workspacePath: string | undefined;
-      if (typeof global !== 'undefined' && (global as any).userWorkspaces) {
-        const workspace = (global as any).userWorkspaces.get(context.userId);
-        if (workspace) {
-          workspacePath = workspace.workspacePath;
-        }
-      }
-
-      if (workspacePath) {
-        logger.info('Executing command in synced workspace', {
-          userId: context.userId,
+        {
           command: args.command,
-          workspacePath,
-        });
+          cwd: args.cwd || context.workspaceRoot,
+          timeoutMs: args.timeoutMs,
+        }
+      ) as { exitCode: number; stdout: string; stderr: string };
 
-        const result = await executor.execute(
-          args.command,
-          context,
-          {
-            cwd: workspacePath,
-            timeoutMs: args.timeoutMs,
-          }
-        );
-
-        return {
-          exitCode: result.exitCode,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        };
-      } else {
-        // Workspace not synced yet, return error
-        throw new Error('Workspace not synced. The browser bridge is syncing your workspace, please try again in a moment.');
-      }
-    } catch (error) {
-      logger.warn('Browser bridge exec.run failed, falling back to server-side', {
+      logger.debug('Agent execution completed', {
         userId: context.userId,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        command: args.command,
+        exitCode: result.exitCode,
       });
-      // Fall through to server-side implementation
+
+      return result;
+    } catch (error) {
+      logger.warn('Agent execution failed, falling back to server-side', {
+        userId: context.userId,
+        command: args.command,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Fall through to server-side execution
     }
+  } else {
+    logger.debug('No agent connected, executing on server', {
+      userId: context.userId,
+      command: args.command,
+    });
   }
 
-  // Server-side fallback (direct execution)
-  // Use workspaceRoot from context as default cwd if not specified
+  // Fallback: Execute on server (limited functionality)
+  // This happens when:
+  // 1. Agent is not connected
+  // 2. Agent execution failed
   const cwd = args.cwd || context.workspaceRoot;
   
   const result = await executor.execute(
