@@ -2548,14 +2548,37 @@ export default function Home() {
   useEffect(() => {
     const isLoadingStarted = (isLoading || isProcessing) && (!prevIsLoadingRef.current && !prevIsProcessingRef.current);
     
+    // Debug logging
+    if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+      console.log('[Scroll Debug]', {
+        isLoading,
+        isProcessing,
+        prevIsLoading: prevIsLoadingRef.current,
+        prevIsProcessing: prevIsProcessingRef.current,
+        isLoadingStarted,
+        hasScrolledAlready: hasScrolledToUserMessageRef.current,
+        hasLastUserMessageRef: !!lastUserMessageRef.current,
+        hasMessagesContainerRef: !!messagesContainerRef.current,
+        messagesCount: messages.length,
+        lastMessageRole: messages[messages.length - 1]?.role
+      });
+    }
+    
     // Reset scroll flag when loading stops
     if (!isLoading && !isProcessing) {
       hasScrolledToUserMessageRef.current = false;
+      if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+        console.log('[Scroll Debug] Reset scroll flag - loading stopped');
+      }
     }
     
     // Scroll when loading starts (only once per loading session)
     if (isLoadingStarted && !hasScrolledToUserMessageRef.current && lastUserMessageRef.current && messagesContainerRef.current) {
       hasScrolledToUserMessageRef.current = true;
+      
+      if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+        console.log('[Scroll Debug] Scroll-to-top triggered - starting animation frames');
+      }
       
       // Use multiple requestAnimationFrames + delay to ensure DOM has fully updated
       // This ensures the assistant message placeholder has been added
@@ -2565,7 +2588,15 @@ export default function Home() {
             const messageElement = lastUserMessageRef.current;
             const container = messagesContainerRef.current;
             
-            if (!messageElement || !container) return;
+            if (!messageElement || !container) {
+              if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+                console.warn('[Scroll Debug] Refs not available after delay:', {
+                  hasMessageElement: !!messageElement,
+                  hasContainer: !!container
+                });
+              }
+              return;
+            }
             
             // Use getBoundingClientRect for more reliable positioning
             const containerRect = container.getBoundingClientRect();
@@ -2578,19 +2609,42 @@ export default function Home() {
             const messageOffsetFromContainerTop = messageRect.top - containerRect.top;
             const targetScrollTop = currentScrollTop + messageOffsetFromContainerTop - containerPadding;
             
+            if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+              console.log('[Scroll Debug] Executing scroll:', {
+                currentScrollTop,
+                messageOffsetFromContainerTop,
+                targetScrollTop,
+                containerHeight: containerRect.height,
+                containerScrollHeight: container.scrollHeight,
+                messageTop: messageRect.top,
+                containerTop: containerRect.top
+              });
+            }
+            
             // Scroll DOWN (increase scrollTop) to move the user message UP to the top
             container.scrollTo({
               top: Math.max(0, targetScrollTop),
               behavior: "smooth"
             });
+            
+            if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+              console.log('[Scroll Debug] Scroll command executed');
+            }
           }, 150); // Delay to ensure DOM is fully updated and assistant message is rendered
         });
+      });
+    } else if (isLoadingStarted && (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll'))) {
+      console.warn('[Scroll Debug] Scroll-to-top NOT triggered:', {
+        isLoadingStarted,
+        hasScrolledAlready: hasScrolledToUserMessageRef.current,
+        hasLastUserMessageRef: !!lastUserMessageRef.current,
+        hasMessagesContainerRef: !!messagesContainerRef.current
       });
     }
     
     prevIsLoadingRef.current = isLoading;
     prevIsProcessingRef.current = isProcessing;
-  }, [isLoading, isProcessing]);
+  }, [isLoading, isProcessing, messages.length]);
 
   // Track when we should start auto-scrolling down (after initial scroll-to-top completes)
   const shouldAutoScrollDownRef = useRef(false);
