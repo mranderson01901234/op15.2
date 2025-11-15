@@ -60,15 +60,22 @@ export async function POST(req: NextRequest) {
     try {
       // Get workspace config - includes user-specific home directory from agent
       // Use cache: 'no-store' to ensure we always get the latest workspace config
-      const workspaceResponse = await fetch(
-        `${req.nextUrl.origin}/api/users/${authenticatedUserId}/workspace`,
-        {
-          headers: {
-            'Cookie': req.headers.get('cookie') || '',
-          },
-          cache: 'no-store', // Always fetch fresh workspace config
-        }
-      );
+      // Use NEXT_PUBLIC_APP_URL if available, otherwise fall back to request origin
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+      const workspaceUrl = `${baseUrl}/api/users/${authenticatedUserId}/workspace`;
+      
+      logger.info('Fetching workspace config', { 
+        url: workspaceUrl, 
+        baseUrl, 
+        origin: req.nextUrl.origin 
+      });
+      
+      const workspaceResponse = await fetch(workspaceUrl, {
+        headers: {
+          'Cookie': req.headers.get('cookie') || '',
+        },
+        cache: 'no-store', // Always fetch fresh workspace config
+      });
       
       if (workspaceResponse.ok) {
         const workspaceConfig = await workspaceResponse.json();
@@ -100,10 +107,18 @@ export async function POST(req: NextRequest) {
         logger.warn('Failed to load workspace config', {
           status: workspaceResponse.status,
           statusText: workspaceResponse.statusText,
+          url: workspaceUrl,
         });
       }
     } catch (error) {
-      logger.warn('Failed to load workspace config', { error: error instanceof Error ? error.message : String(error) });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      logger.warn('Failed to load workspace config', {
+        errorMessage,
+        errorStack,
+        origin: req.nextUrl.origin,
+        hasNextPublicAppUrl: !!process.env.NEXT_PUBLIC_APP_URL,
+      });
       // Use defaults: '/' root (universal), no restrictions
     }
     
