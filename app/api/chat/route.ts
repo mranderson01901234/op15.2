@@ -156,7 +156,13 @@ export async function POST(req: NextRequest) {
       
       // Call imagen API directly
       try {
-        const imagenResponse = await fetch(`${req.nextUrl.origin}/api/imagen/generate`, {
+        // Use NEXT_PUBLIC_APP_URL if available, otherwise fall back to request origin
+        // This ensures correct URL on Railway with custom domains
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+        const imagenUrl = `${baseUrl}/api/imagen/generate`;
+        logger.info("Calling imagen API", { url: imagenUrl, prompt: imagePrompt, baseUrl, origin: req.nextUrl.origin });
+        
+        const imagenResponse = await fetch(imagenUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -171,13 +177,30 @@ export async function POST(req: NextRequest) {
           }),
         });
 
+        logger.info("Imagen API response", { 
+          status: imagenResponse.status, 
+          ok: imagenResponse.ok,
+          url: imagenUrl 
+        });
+
         if (!imagenResponse.ok) {
           const errorData = await imagenResponse.json().catch(() => ({ error: "Unknown error" }));
-          throw new Error(errorData.error || "Failed to generate image");
+          const errorMessage = errorData.error || errorData.message || "Failed to generate image";
+          logger.error("Imagen API error response", new Error(errorMessage), { 
+            status: imagenResponse.status,
+            error: errorMessage,
+            errorData 
+          });
+          throw new Error(errorMessage);
         }
 
         const imagenData = await imagenResponse.json();
         const images = imagenData.images || [];
+
+        logger.info("Imagen API response data", { 
+          hasImages: images.length > 0,
+          imageCount: images.length 
+        });
 
         if (images.length > 0 && images[0]?.dataUrl) {
           generatedImage = {
@@ -186,10 +209,16 @@ export async function POST(req: NextRequest) {
           };
           logger.info("Image generated successfully", { hasImage: !!generatedImage });
         } else {
+          logger.error("No images in imagen API response", new Error("No images returned"), { imagenData });
           throw new Error("No images returned from imagen API");
         }
       } catch (error) {
-        logger.error("Image generation failed", error instanceof Error ? error : undefined);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error("Image generation failed", error instanceof Error ? error : new Error(errorMessage), {
+          prompt: imagePrompt,
+          origin: req.nextUrl.origin,
+          errorMessage,
+        });
         // Continue with LLM processing even if image generation failed
         // The LLM can handle the error message
       }
