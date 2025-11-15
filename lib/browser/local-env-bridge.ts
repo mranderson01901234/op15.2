@@ -350,9 +350,19 @@ export class LocalEnvBridge {
             break;
 
           case 'exec.run':
-            // For exec.run, sync workspace to cloud
-            await this.syncWorkspaceForExec(request);
-            data = { success: true, message: 'Workspace synced for execution' };
+            // Check if this is a system information request
+            const command = (request.command || '').toLowerCase().trim();
+            if (this.isSystemInfoCommand(command)) {
+              // Return actual device platform information using browser APIs
+              // Format matches what exec.ts expects: { exitCode, stdout, stderr }
+              data = this.getSystemInfo();
+            } else {
+              // For other commands, sync workspace to cloud
+              // Note: The server will execute the command after syncing
+              await this.syncWorkspaceForExec(request);
+              // Return format that indicates command should be executed on server
+              data = { exitCode: 0, stdout: '', stderr: '', needsServerExecution: true };
+            }
             break;
 
           default:
@@ -621,6 +631,117 @@ export class LocalEnvBridge {
     }
 
     await current.removeEntry(fileName);
+  }
+
+  /**
+   * Check if command is requesting system information
+   */
+  private isSystemInfoCommand(command: string): boolean {
+    const systemInfoCommands = [
+      'uname',
+      'uname -a',
+      'uname -s',
+      'uname -m',
+      'uname -r',
+      'system_profiler',
+      'systeminfo',
+      'hostnamectl',
+      'cat /etc/os-release',
+      'lsb_release -a',
+      'sw_vers',
+    ];
+    
+    return systemInfoCommands.some(cmd => command.includes(cmd));
+  }
+
+  /**
+   * Get system information using browser APIs
+   */
+  private getSystemInfo(): { exitCode: number; stdout: string; stderr: string } {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'System information not available in this environment',
+      };
+    }
+
+    const userAgent = navigator.userAgent;
+    const platform = navigator.platform;
+    const language = navigator.language;
+    const hardwareConcurrency = navigator.hardwareConcurrency || 'unknown';
+    const deviceMemory = (navigator as any).deviceMemory || 'unknown';
+    
+    // Detect operating system
+    let os = 'Unknown';
+    let osVersion = '';
+    let arch = 'unknown';
+    
+    // iOS detection
+    if (/iPhone|iPad|iPod/.test(userAgent)) {
+      os = 'iOS';
+      const match = userAgent.match(/OS (\d+)_(\d+)/);
+      if (match) {
+        osVersion = `${match[1]}.${match[2]}`;
+      }
+      arch = 'arm64';
+    }
+    // Android detection
+    else if (/Android/.test(userAgent)) {
+      os = 'Android';
+      const match = userAgent.match(/Android ([\d.]+)/);
+      if (match) {
+        osVersion = match[1];
+      }
+      arch = 'arm64';
+    }
+    // macOS detection
+    else if (/Macintosh|Mac OS X/.test(userAgent)) {
+      os = 'Darwin';
+      const match = userAgent.match(/Mac OS X (\d+)[._](\d+)/);
+      if (match) {
+        osVersion = `${match[1]}.${match[2]}`;
+      }
+      arch = platform.includes('Intel') ? 'x86_64' : 'arm64';
+    }
+    // Windows detection
+    else if (/Windows/.test(userAgent)) {
+      os = 'Windows';
+      const match = userAgent.match(/Windows NT ([\d.]+)/);
+      if (match) {
+        osVersion = match[1];
+      }
+      arch = platform.includes('Win64') || platform.includes('x64') ? 'x86_64' : 'x86';
+    }
+    // Linux detection
+    else if (/Linux/.test(userAgent) || platform.includes('Linux')) {
+      os = 'Linux';
+      arch = platform.includes('x86_64') ? 'x86_64' : platform.includes('arm') ? 'arm64' : 'unknown';
+    }
+
+    // Build uname-like output
+    const hostname = typeof window !== 'undefined' && window.location ? window.location.hostname : 'unknown';
+    const kernelVersion = osVersion || 'unknown';
+    
+    const systemInfo = `${os} ${hostname} ${kernelVersion} ${arch} ${os}`;
+    
+    const detailedInfo = [
+      `Operating System: ${os}${osVersion ? ` ${osVersion}` : ''}`,
+      `Platform: ${platform}`,
+      `Architecture: ${arch}`,
+      `CPU Cores: ${hardwareConcurrency}`,
+      `Device Memory: ${deviceMemory !== 'unknown' ? `${deviceMemory}GB` : 'unknown'}`,
+      `Language: ${language}`,
+      `User Agent: ${userAgent}`,
+      '',
+      `uname -a equivalent: ${systemInfo}`,
+    ].join('\n');
+
+    return {
+      exitCode: 0,
+      stdout: detailedInfo,
+      stderr: '',
+    };
   }
 
   /**
