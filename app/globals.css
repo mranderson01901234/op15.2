@@ -192,5 +192,15 @@
   .invisible-scrollbar::-webkit-scrollbar {
     display: none; /* Chrome, Safari, Opera */
   }
+
+  /* Mobile Safari input box padding fix */
+  @supports (padding: max(0px)) {
+    @media screen and (max-width: 768px) {
+      /* Ensure input area has enough padding for Safari's bottom UI */
+      .mobile-safari-input-fix {
+        padding-bottom: calc(1rem + max(3rem, env(safe-area-inset-bottom, 3rem))) !important;
+      }
+    }
+  }
 }
 

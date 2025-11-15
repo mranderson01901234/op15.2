@@ -3883,9 +3883,12 @@ export default function Home() {
 
       {/* Input Area - Sticky Footer */}
       <div 
-        className="flex-shrink-0 border-t border-background bg-background p-4 relative z-10"
+        className="flex-shrink-0 border-t border-background bg-background relative z-10 mobile-safari-input-fix"
         style={{
-          paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 1rem))',
+          paddingTop: '1rem',
+          paddingLeft: '1rem',
+          paddingRight: '1rem',
+          paddingBottom: 'calc(1rem + max(3rem, env(safe-area-inset-bottom, 3rem)))',
           position: 'relative',
         }}
       >
