@@ -115,44 +115,76 @@ export function TopHeader() {
   // Remove leading slash from workspace root for display
   const displayRoot = workspaceRoot?.startsWith('/') ? workspaceRoot.slice(1) : workspaceRoot;
 
+  // Show auth buttons if not loaded yet or if user is not authenticated
+  const showAuthButtons = !authLoaded || !userId;
+
   return (
     <div 
       className="fixed top-4 right-4 flex items-center gap-3"
       style={{
-        zIndex: 9999,
+        zIndex: 99999,
         position: 'fixed',
         top: '1rem',
         right: '1rem',
         WebkitTransform: 'translateZ(0)', // Force hardware acceleration for Safari
         transform: 'translateZ(0)',
+        isolation: 'isolate', // Create new stacking context for Safari
+        willChange: 'transform', // Hint Safari to optimize
+        pointerEvents: 'auto', // Ensure clicks work in Safari
       }}
     >
       {/* Signed Out: Show Sign In / Start for Free */}
       <SignedOut>
-        <SignInButton mode="modal">
-          <button 
-            className="px-4 py-2 text-sm font-medium bg-sidebar text-sidebar-foreground rounded-md hover:bg-sidebar/90 transition-colors border border-border/50 shadow-lg"
-            style={{
-              WebkitAppearance: 'none',
-              appearance: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            Sign in
-          </button>
-        </SignInButton>
-        <SignUpButton mode="modal">
-          <button 
-            className="px-4 py-2 text-sm font-medium bg-white text-black rounded-md hover:bg-white/90 transition-colors shadow-lg font-semibold"
-            style={{
-              WebkitAppearance: 'none',
-              appearance: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            Start for free
-          </button>
-        </SignUpButton>
+        <div 
+          style={{ 
+            display: 'flex', 
+            gap: '0.75rem', 
+            alignItems: 'center',
+            visibility: 'visible',
+            opacity: 1,
+          }}
+        >
+          <SignInButton mode="modal">
+            <button 
+              className="px-4 py-2 text-sm font-medium bg-sidebar text-sidebar-foreground rounded-md hover:bg-sidebar/90 transition-colors border border-border/50 shadow-lg"
+              style={{
+                WebkitAppearance: 'none',
+                appearance: 'none',
+                cursor: 'pointer',
+                display: 'inline-block',
+                position: 'relative',
+                zIndex: 1,
+                WebkitTransform: 'translateZ(0)',
+                transform: 'translateZ(0)',
+                visibility: 'visible',
+                opacity: 1,
+                pointerEvents: 'auto',
+              }}
+            >
+              Sign in
+            </button>
+          </SignInButton>
+          <SignUpButton mode="modal">
+            <button 
+              className="px-4 py-2 text-sm font-medium bg-white text-black rounded-md hover:bg-white/90 transition-colors shadow-lg font-semibold"
+              style={{
+                WebkitAppearance: 'none',
+                appearance: 'none',
+                cursor: 'pointer',
+                display: 'inline-block',
+                position: 'relative',
+                zIndex: 1,
+                WebkitTransform: 'translateZ(0)',
+                transform: 'translateZ(0)',
+                visibility: 'visible',
+                opacity: 1,
+                pointerEvents: 'auto',
+              }}
+            >
+              Start for free
+            </button>
+          </SignUpButton>
+        </div>
       </SignedOut>
 
       {/* Signed In: Show Workspace Root + Sign Out */}

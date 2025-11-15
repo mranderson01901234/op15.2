@@ -4273,8 +4273,18 @@ export default function Home() {
             }
           `
         }} />
-        {/* Local Environment Status - Top Left */}
-        <div className="absolute top-4 left-4 z-10">
+        {/* Local Environment Status - Top Left - Visible on desktop */}
+        <div 
+          className="absolute top-4 left-4 z-20"
+          style={{
+            zIndex: 20,
+            position: 'absolute',
+            top: '1rem',
+            left: '1rem',
+            WebkitTransform: 'translateZ(0)',
+            transform: 'translateZ(0)',
+          }}
+        >
           <LocalEnvConnector />
         </div>
         {/* Messages Area - Scrollable */}
@@ -4930,8 +4940,18 @@ export default function Home() {
                 }
               `
             }} />
-            {/* Local Environment Status - Top Left */}
-            <div className="absolute top-4 left-4 z-10">
+            {/* Local Environment Status - Top Left - Visible on mobile */}
+            <div 
+              className="absolute top-4 left-4 z-20"
+              style={{
+                zIndex: 20,
+                position: 'absolute',
+                top: '1rem',
+                left: '1rem',
+                WebkitTransform: 'translateZ(0)',
+                transform: 'translateZ(0)',
+              }}
+            >
               <LocalEnvConnector />
             </div>
             {/* Messages Area - Scrollable */}
