@@ -133,12 +133,16 @@ export function AgentAutoInstaller() {
     }
   };
 
-  if (!isLoaded || !user || !toggleLoaded || !isEnabled) {
-    return null;
-  }
+  const handleReinstall = () => {
+    // Clear installation status to allow reinstall
+    localStorage.removeItem("op15-agent-installed");
+    setIsInstalled(false);
+    setIsConnected(false);
+    // Trigger install flow
+    handleInstall();
+  };
 
-  // Hide component when agent is connected (it will show in footer instead)
-  if (isConnected) {
+  if (!isLoaded || !user || !toggleLoaded || !isEnabled) {
     return null;
   }
 
@@ -155,24 +159,82 @@ export function AgentAutoInstaller() {
           <Loader2 className="h-3 w-3 animate-spin" />
           <span>Checking status...</span>
         </div>
+      ) : isConnected ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 py-1">
+            <CheckCircle className="h-3 w-3" />
+            <span>Agent connected</span>
+          </div>
+          <button
+            onClick={handleReinstall}
+            disabled={isInstalling}
+            className={cn(
+              "w-full px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs",
+              "bg-muted hover:bg-muted/80 text-foreground",
+              "border border-border",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+              "transition-colors"
+            )}
+            title="Reinstall agent (useful if you deleted the installer)"
+          >
+            {isInstalling ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>Downloading...</span>
+              </>
+            ) : (
+              <>
+                <Download className="h-3 w-3" />
+                <span>Reinstall Agent</span>
+              </>
+            )}
+          </button>
+          <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Reinstall if you deleted the installer or need to update
+          </div>
+        </div>
       ) : isInstalled ? (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs text-yellow-600 dark:text-yellow-400 py-1">
             <AlertCircle className="h-3 w-3" />
             <span>Agent installed but not connected</span>
           </div>
-          <button
-            onClick={checkAgentStatus}
-            className={cn(
-              "w-full px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs",
-              "bg-muted hover:bg-muted/80 text-foreground",
-              "border border-border",
-              "transition-colors"
-            )}
-          >
-            <Terminal className="h-3 w-3" />
-            <span>Check Connection</span>
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={checkAgentStatus}
+              className={cn(
+                "flex-1 px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs",
+                "bg-muted hover:bg-muted/80 text-foreground",
+                "border border-border",
+                "transition-colors"
+              )}
+            >
+              <Terminal className="h-3 w-3" />
+              <span>Check</span>
+            </button>
+            <button
+              onClick={handleReinstall}
+              disabled={isInstalling}
+              className={cn(
+                "flex-1 px-3 py-1.5 flex items-center justify-center gap-2 rounded-md text-xs",
+                "bg-blue-500 text-white hover:bg-blue-600",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                "transition-colors"
+              )}
+            >
+              {isInstalling ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Downloading...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3 w-3" />
+                  <span>Reinstall</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       ) : (
         <>
