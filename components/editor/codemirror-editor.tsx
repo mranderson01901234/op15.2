@@ -15,10 +15,11 @@ import { css } from "@codemirror/lang-css";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { useWorkspace } from "@/contexts/workspace-context";
-import { X, Save, CheckCircle2, XCircle } from "lucide-react";
+import { X, Save, CheckCircle2, XCircle, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
 import { CommandsButton } from "@/components/layout/commands-button";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 // Custom theme matching matte black background
 const customTheme = EditorView.theme({
@@ -33,6 +34,15 @@ const customTheme = EditorView.theme({
     fontSize: "14px",
     padding: "16px",
     minHeight: "100%",
+  },
+  "@media (max-width: 767px)": {
+    ".cm-content": {
+      fontSize: "16px", // Larger font for mobile readability
+      padding: "12px",
+    },
+    ".cm-lineNumbers .cm-lineNumber": {
+      minWidth: "4ch", // More space for line numbers on mobile
+    },
   },
   ".cm-editor": {
     backgroundColor: "transparent",
@@ -81,6 +91,8 @@ export function CodeMirrorEditor() {
   const viewRef = useRef<EditorView | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const isMobile = useIsMobile();
+  const [showMobileToolbar, setShowMobileToolbar] = useState(true);
 
   // Detect language from file extension
   const detectedLanguage = useMemo(() => {
@@ -216,6 +228,21 @@ export function CodeMirrorEditor() {
     }
   };
 
+  // Mobile scroll functions
+  const scrollUp = () => {
+    if (viewRef.current) {
+      const scrollDOM = viewRef.current.scrollDOM;
+      scrollDOM.scrollBy({ top: -100, behavior: "smooth" });
+    }
+  };
+
+  const scrollDown = () => {
+    if (viewRef.current) {
+      const scrollDOM = viewRef.current.scrollDOM;
+      scrollDOM.scrollBy({ top: 100, behavior: "smooth" });
+    }
+  };
+
   if (!editorState.isOpen) {
     return null;
   }
@@ -223,22 +250,26 @@ export function CodeMirrorEditor() {
   return (
     <div className="flex flex-col h-full bg-background border-l border-border">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-sidebar">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+      <div className={cn(
+        "flex items-center justify-between border-b border-border bg-sidebar",
+        isMobile ? "px-2 py-2" : "px-4 py-2"
+      )}>
+        <div className="flex items-center gap-2 flex-1 min-w-0">
           {/* Save Button - moved to left */}
           <button
             onClick={handleSave}
             disabled={isSaving || !editorState.hasUnsavedChanges}
             className={cn(
-              "px-3 py-1 text-xs font-medium rounded-md transition-all",
+              "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
               "bg-primary/20 text-primary border border-primary/30",
               "hover:bg-primary/30 hover:border-primary/50",
               "disabled:opacity-50 disabled:cursor-not-allowed",
-              "flex items-center gap-1.5"
+              "flex items-center gap-1.5",
+              isMobile && "min-h-[44px] min-w-[44px]" // Touch target optimization
             )}
           >
-            <Save className="h-3 w-3" />
-            Save
+            <Save className={cn("h-3 w-3", isMobile && "h-4 w-4")} />
+            {!isMobile && "Save"}
           </button>
 
           {/* Save Status */}
@@ -269,21 +300,52 @@ export function CodeMirrorEditor() {
 
         <div className="flex items-center gap-2">
           {/* Commands Button (Cheat Sheet) */}
-          <CommandsButton />
+          {!isMobile && <CommandsButton />}
           
           {/* User Button */}
-          <UserButtonWithClear />
+          {!isMobile && <UserButtonWithClear />}
           
           {/* Close Button */}
           <button
             onClick={closeEditor}
-            className="p-1.5 rounded-md hover:bg-accent/50 transition-colors"
+            className={cn(
+              "rounded-md hover:bg-accent/50 transition-colors",
+              isMobile ? "p-2.5 min-h-[44px] min-w-[44px]" : "p-1.5"
+            )}
             title="Close editor"
           >
-            <X className="h-4 w-4 text-muted-foreground" />
+            <X className={cn("text-muted-foreground", isMobile ? "h-5 w-5" : "h-4 w-4")} />
           </button>
         </div>
       </div>
+
+      {/* Mobile Toolbar */}
+      {isMobile && showMobileToolbar && (
+        <div className="flex items-center justify-between px-2 py-2 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={scrollUp}
+              className="p-2.5 min-h-[44px] min-w-[44px] rounded-md hover:bg-accent/50 transition-colors flex items-center justify-center"
+              title="Scroll up"
+            >
+              <ChevronUp className="h-5 w-5 text-muted-foreground" />
+            </button>
+            <button
+              onClick={scrollDown}
+              className="p-2.5 min-h-[44px] min-w-[44px] rounded-md hover:bg-accent/50 transition-colors flex items-center justify-center"
+              title="Scroll down"
+            >
+              <ChevronDown className="h-5 w-5 text-muted-foreground" />
+            </button>
+          </div>
+          <button
+            onClick={() => setShowMobileToolbar(false)}
+            className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Hide
+          </button>
+        </div>
+      )}
 
       {/* Editor */}
       <div className="flex-1 relative min-h-0 overflow-hidden">

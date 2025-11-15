@@ -71,11 +71,13 @@ export function MobileBottomNav() {
               key={item.id}
               onClick={() => setActiveMobilePanel(item.id)}
               className={cn(
-                "flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-lg transition-all duration-200 min-w-[72px]",
+                "flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-lg transition-all duration-200",
+                "min-h-[44px] min-w-[44px] touch-manipulation", // Touch target optimization
                 isActive
                   ? "text-foreground bg-accent"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50 active:bg-accent/70"
               )}
+              aria-label={item.label}
             >
               <Icon className={cn("h-5 w-5", isActive && "stroke-[2.5]")} />
               <span className="text-xs font-medium">{item.label}</span>

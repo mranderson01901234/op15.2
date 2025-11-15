@@ -5,6 +5,7 @@ import { X, ArrowLeft, ArrowRight, RefreshCw, Home, AlertCircle } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface BrowserPanelProps {
   sid: string;
@@ -34,6 +35,7 @@ export default function BrowserPanel({
   const [error, setError] = useState<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!sid) {
@@ -420,7 +422,10 @@ export default function BrowserPanel({
   return (
     <div className="relative w-full h-full bg-background flex flex-col">
       {/* Browser Toolbar */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-background z-50 relative flex-shrink-0">
+      <div className={cn(
+        "flex items-center border-b border-border bg-background z-50 relative flex-shrink-0",
+        isMobile ? "gap-1 px-1 py-1.5" : "gap-1.5 px-2 py-1.5"
+      )}>
         {/* Navigation Buttons */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <Button
@@ -428,39 +433,50 @@ export default function BrowserPanel({
             size="icon"
             onClick={handleBack}
             disabled={!canGoBack}
-            className="h-7 w-7"
+            className={cn(
+              "touch-manipulation",
+              isMobile ? "h-11 w-11 min-h-[44px] min-w-[44px]" : "h-7 w-7"
+            )}
             title="Back"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
           </Button>
           <Button
             variant="outline"
             size="icon"
             onClick={handleForward}
             disabled={!canGoForward}
-            className="h-7 w-7"
+            className={cn(
+              "touch-manipulation",
+              isMobile ? "h-11 w-11 min-h-[44px] min-w-[44px]" : "h-7 w-7"
+            )}
             title="Forward"
           >
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
           </Button>
           <Button
             variant="outline"
             size="icon"
             onClick={handleRefresh}
-            className="h-7 w-7"
+            className={cn(
+              "touch-manipulation",
+              isMobile ? "h-11 w-11 min-h-[44px] min-w-[44px]" : "h-7 w-7"
+            )}
             title="Refresh"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
           </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => handleNavigate('about:blank')}
-            className="h-7 w-7"
-            title="Home"
-          >
-            <Home className="h-3.5 w-3.5" />
-          </Button>
+          {!isMobile && (
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => handleNavigate('about:blank')}
+              className="h-7 w-7"
+              title="Home"
+            >
+              <Home className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
 
         {/* URL Bar */}
@@ -470,7 +486,9 @@ export default function BrowserPanel({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="h-7 text-xs"
+            className={cn(
+              isMobile ? "h-11 text-sm" : "h-7 text-xs"
+            )}
             placeholder="Enter URL..."
           />
         </div>
@@ -478,19 +496,28 @@ export default function BrowserPanel({
         {/* Connection Status & Close */}
         <div className="flex items-center gap-1 flex-shrink-0">
           {isConnected ? (
-            <span className="h-2 w-2 rounded-full bg-green-500" title="Connected" />
+            <span className={cn(
+              "rounded-full bg-green-500",
+              isMobile ? "h-3 w-3" : "h-2 w-2"
+            )} title="Connected" />
           ) : (
-            <span className="h-2 w-2 rounded-full bg-red-500" title="Disconnected" />
+            <span className={cn(
+              "rounded-full bg-red-500",
+              isMobile ? "h-3 w-3" : "h-2 w-2"
+            )} title="Disconnected" />
           )}
           {onClose && (
             <Button
               variant="outline"
               size="icon"
               onClick={onClose}
-              className="h-7 w-7 hover:bg-destructive hover:text-destructive-foreground"
+              className={cn(
+                "hover:bg-destructive hover:text-destructive-foreground touch-manipulation",
+                isMobile ? "h-11 w-11 min-h-[44px] min-w-[44px]" : "h-7 w-7"
+              )}
               title="Close"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className={cn(isMobile ? "h-5 w-5" : "h-3.5 w-3.5")} />
             </Button>
           )}
         </div>

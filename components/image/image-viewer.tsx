@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Download, Copy, Share2, ZoomIn, ZoomOut, Maximize2, X } from "lucide-react";
+import { Download, Copy, Share2, ZoomIn, ZoomOut, Maximize2, X, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 interface ImageViewerProps {
   imageUrl: string;
@@ -15,15 +17,93 @@ export function ImageViewer({ imageUrl, onClose }: ImageViewerProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isImageLoaded, setIsImageLoaded] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [lastPinchDistance, setLastPinchDistance] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const isMobile = useIsMobile();
 
   // Reset state when image URL changes
   useEffect(() => {
     setIsImageLoaded(false);
     setScale(0.5);
     setPosition({ x: 0, y: 0 });
+    setIsFullscreen(false);
+    setLastPinchDistance(null);
   }, [imageUrl]);
+
+  // Handle fullscreen
+  const toggleFullscreen = useCallback(() => {
+    if (!containerRef.current) return;
+    
+    if (!isFullscreen) {
+      if (containerRef.current.requestFullscreen) {
+        containerRef.current.requestFullscreen();
+      } else if ((containerRef.current as any).webkitRequestFullscreen) {
+        (containerRef.current as any).webkitRequestFullscreen();
+      } else if ((containerRef.current as any).mozRequestFullScreen) {
+        (containerRef.current as any).mozRequestFullScreen();
+      }
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      } else if ((document as any).mozCancelFullScreen) {
+        (document as any).mozCancelFullScreen();
+      }
+      setIsFullscreen(false);
+    }
+  }, [isFullscreen]);
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Handle pinch-to-zoom on mobile
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+      setLastPinchDistance(distance);
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2 && lastPinchDistance !== null) {
+      e.preventDefault();
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+      const scaleChange = distance / lastPinchDistance;
+      const newScale = Math.max(0.1, Math.min(10, scale * scaleChange));
+      setScale(newScale);
+      setLastPinchDistance(distance);
+    }
+  }, [lastPinchDistance, scale]);
+
+  const handleTouchEnd = useCallback(() => {
+    setLastPinchDistance(null);
+  }, []);
 
   // Auto-fit and center image on load
   useEffect(() => {
@@ -266,9 +346,15 @@ export function ImageViewer({ imageUrl, onClose }: ImageViewerProps) {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-background overflow-hidden"
+      className={cn(
+        "relative w-full h-full bg-background overflow-hidden",
+        isFullscreen && "fixed inset-0 z-[9999]"
+      )}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {/* Image */}
       <img
@@ -295,62 +381,96 @@ export function ImageViewer({ imageUrl, onClose }: ImageViewerProps) {
       />
 
       {/* Controls - positioned at bottom center */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+      <div className={cn(
+        "absolute left-1/2 -translate-x-1/2 flex gap-2 z-10",
+        isMobile ? "bottom-16 flex-wrap justify-center" : "bottom-4"
+      )}>
         <Button
           variant="outline"
           size="icon"
           onClick={zoomOut}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
+          className={cn(
+            "bg-background/80 backdrop-blur-sm border-border/50",
+            isMobile && "min-h-[44px] min-w-[44px]"
+          )}
         >
-          <ZoomOut className="h-4 w-4" />
+          <ZoomOut className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </Button>
         <Button
           variant="outline"
           size="icon"
           onClick={zoomIn}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
+          className={cn(
+            "bg-background/80 backdrop-blur-sm border-border/50",
+            isMobile && "min-h-[44px] min-w-[44px]"
+          )}
         >
-          <ZoomIn className="h-4 w-4" />
+          <ZoomIn className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </Button>
         <Button
           variant="outline"
           size="icon"
           onClick={resetZoom}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
+          className={cn(
+            "bg-background/80 backdrop-blur-sm border-border/50",
+            isMobile && "min-h-[44px] min-w-[44px]"
+          )}
         >
-          <Maximize2 className="h-4 w-4" />
+          <Maximize2 className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </Button>
         <Button
           variant="outline"
           size="icon"
-          onClick={handleDownload}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
+          onClick={toggleFullscreen}
+          className={cn(
+            "bg-background/80 backdrop-blur-sm border-border/50",
+            isMobile && "min-h-[44px] min-w-[44px]"
+          )}
         >
-          <Download className="h-4 w-4" />
+          {isFullscreen ? (
+            <Minimize2 className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+          ) : (
+            <Maximize2 className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
+          )}
         </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={handleCopy}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={handleShare}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
-        >
-          <Share2 className="h-4 w-4" />
-        </Button>
+        {!isMobile && (
+          <>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleDownload}
+              className="bg-background/80 backdrop-blur-sm border-border/50"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleCopy}
+              className="bg-background/80 backdrop-blur-sm border-border/50"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleShare}
+              className="bg-background/80 backdrop-blur-sm border-border/50"
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          </>
+        )}
         <Button
           variant="outline"
           size="icon"
           onClick={onClose}
-          className="bg-background/80 backdrop-blur-sm border-border/50"
+          className={cn(
+            "bg-background/80 backdrop-blur-sm border-border/50",
+            isMobile && "min-h-[44px] min-w-[44px]"
+          )}
         >
-          <X className="h-4 w-4" />
+          <X className={cn("h-4 w-4", isMobile && "h-5 w-5")} />
         </Button>
       </div>
 

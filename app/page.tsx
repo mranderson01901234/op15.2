@@ -2035,7 +2035,7 @@ export default function Home() {
   const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const scrollAnimationFrameRef = useRef<number | null>(null);
-  const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser, activeMobilePanel } = useWorkspace();
+  const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser, activeMobilePanel, setActiveMobilePanel } = useWorkspace();
   const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
   const { setInsertTextHandler, setSendMessageHandler, sendMessage } = useChatInput();
   const { userId, isLoaded: authLoaded } = useAuth();
@@ -3275,6 +3275,81 @@ export default function Home() {
     }
   };
 
+  // Touch gesture handlers for panel switching
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const [pullToRefreshY, setPullToRefreshY] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!isMobile) return;
+    const touch = e.touches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+    
+    // Check if we're at the top of the messages container for pull-to-refresh
+    if (messagesContainerRef.current) {
+      const container = messagesContainerRef.current;
+      const scrollTop = container.scrollTop;
+      if (scrollTop === 0 && touch.clientY > 100) {
+        setIsPulling(true);
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isMobile || !touchStartRef.current) return;
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - touchStartRef.current.x;
+    const deltaY = touch.clientY - touchStartRef.current.y;
+    
+    // Pull-to-refresh handling
+    if (isPulling && deltaY > 0) {
+      e.preventDefault();
+      setPullToRefreshY(Math.min(deltaY, 80));
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!isMobile || !touchStartRef.current) return;
+    const touch = e.changedTouches[0];
+    const deltaX = touch.clientX - touchStartRef.current.x;
+    const deltaY = touch.clientY - touchStartRef.current.y;
+    const deltaTime = Date.now() - touchStartRef.current.time;
+    const absDeltaX = Math.abs(deltaX);
+    const absDeltaY = Math.abs(deltaY);
+    
+    // Pull-to-refresh: trigger refresh if pulled enough
+    if (isPulling) {
+      if (pullToRefreshY > 50) {
+        // Trigger refresh - reload messages or refresh chat
+        window.location.reload();
+      }
+      setIsPulling(false);
+      setPullToRefreshY(0);
+      touchStartRef.current = null;
+      return;
+    }
+    
+    // Swipe gesture: horizontal swipe > 50px and faster than 300ms
+    if (absDeltaX > absDeltaY && absDeltaX > 50 && deltaTime < 300) {
+      const panels: Array<"chat" | "files" | "editor" | "image" | "video" | "browser"> = ["chat", "files", "editor"];
+      const currentIndex = panels.indexOf(activeMobilePanel);
+      
+      if (deltaX > 0 && currentIndex > 0) {
+        // Swipe right - go to previous panel
+        setActiveMobilePanel(panels[currentIndex - 1]);
+      } else if (deltaX < 0 && currentIndex < panels.length - 1) {
+        // Swipe left - go to next panel
+        setActiveMobilePanel(panels[currentIndex + 1]);
+      }
+    }
+    
+    touchStartRef.current = null;
+  };
+
   return (
     <>
       {/* Desktop Layout - hidden on mobile */}
@@ -4014,7 +4089,28 @@ export default function Home() {
       </div>
 
       {/* Mobile Layout - hidden on desktop */}
-      <div className="flex md:hidden h-full flex-col pb-16">
+      <div 
+        className="flex md:hidden h-full flex-col pb-16"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* Pull-to-refresh indicator */}
+        {isPulling && (
+          <div 
+            className="absolute top-0 left-0 right-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-50 transition-transform"
+            style={{ 
+              transform: `translateY(${pullToRefreshY}px)`,
+              height: `${Math.min(pullToRefreshY, 80)}px`
+            }}
+          >
+            {pullToRefreshY > 50 ? (
+              <span className="text-sm text-muted-foreground">Release to refresh</span>
+            ) : (
+              <span className="text-sm text-muted-foreground">Pull to refresh</span>
+            )}
+          </div>
+        )}
         {activeMobilePanel === "chat" && (
           <div className="flex h-full flex-col bg-background overflow-hidden relative">
             <style dangerouslySetInnerHTML={{

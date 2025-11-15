@@ -2,6 +2,8 @@
 
 import { X, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 interface VideoViewerProps {
   videoUrl: string;
@@ -96,6 +98,7 @@ export function VideoViewer({ videoUrl, videoTitle, onClose }: VideoViewerProps)
   const dailymotionEmbedUrl = getDailymotionEmbedUrl(videoUrl);
   const isDirectVideo = isDirectVideoFile(videoUrl);
   const mightEmbed = mightBeEmbeddable(videoUrl);
+  const isMobile = useIsMobile();
 
   const handleOpenInNewTab = () => {
     window.open(videoUrl, '_blank', 'noopener,noreferrer');
@@ -104,40 +107,54 @@ export function VideoViewer({ videoUrl, videoTitle, onClose }: VideoViewerProps)
   return (
     <div className="relative w-full h-full bg-background flex flex-col">
       {/* Header - always visible with prominent close button */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background z-50 relative flex-shrink-0">
-        <div className="flex-1 min-w-0 pr-4">
+      <div className={cn(
+        "flex items-center justify-between border-b border-border bg-background z-50 relative flex-shrink-0",
+        isMobile ? "px-2 py-2" : "px-4 py-3"
+      )}>
+        <div className="flex-1 min-w-0 pr-2">
           {videoTitle && (
-            <h3 className="text-sm font-medium text-foreground truncate mb-1">
+            <h3 className={cn(
+              "font-medium text-foreground truncate mb-1",
+              isMobile ? "text-xs" : "text-sm"
+            )}>
               {videoTitle}
             </h3>
           )}
-          <a
-            href={videoUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted-foreground hover:text-foreground truncate block"
-          >
-            {videoUrl}
-          </a>
+          {!isMobile && (
+            <a
+              href={videoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-muted-foreground hover:text-foreground truncate block"
+            >
+              {videoUrl}
+            </a>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <Button
             variant="outline"
             size="icon"
             onClick={handleOpenInNewTab}
-            className="h-9 w-9 bg-background border-border hover:bg-muted"
+            className={cn(
+              "bg-background border-border hover:bg-muted",
+              isMobile ? "h-11 w-11" : "h-9 w-9"
+            )}
             title="Open in new tab"
           >
-            <ExternalLink className="h-4 w-4" />
+            <ExternalLink className={cn(isMobile ? "h-5 w-5" : "h-4 w-4")} />
           </Button>
           <Button
             variant="outline"
             size="icon"
             onClick={onClose}
-            className="h-9 w-9 bg-background border-border hover:bg-destructive hover:text-destructive-foreground"
+            className={cn(
+              "bg-background border-border hover:bg-destructive hover:text-destructive-foreground",
+              isMobile ? "h-11 w-11" : "h-9 w-9"
+            )}
             title="Close"
           >
-            <X className="h-4 w-4" />
+            <X className={cn(isMobile ? "h-5 w-5" : "h-4 w-4")} />
           </Button>
         </div>
       </div>
@@ -172,8 +189,13 @@ export function VideoViewer({ videoUrl, videoTitle, onClose }: VideoViewerProps)
           <video
             src={videoUrl}
             controls
+            playsInline
             className="max-w-full max-h-full"
-            style={{ maxHeight: 'calc(100vh - 120px)' }}
+            style={{ 
+              maxHeight: isMobile ? 'calc(100vh - 80px)' : 'calc(100vh - 120px)',
+              width: '100%',
+              height: 'auto'
+            }}
           >
             Your browser does not support the video tag.
           </video>
