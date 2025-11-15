@@ -320,36 +320,15 @@ export const FUNCTION_REGISTRY: FunctionDeclaration[] = [
       required: ["query"],
     },
   },
-  {
-    name: "imagen.generate",
-    description: "Generate images using Google's Imagen 4.0 model. Use this when the user asks to create, generate, or make an image. IMPORTANT: When you generate an image, it will automatically be displayed in the image viewer panel on the right side of the screen. Always acknowledge to the user that the image has been generated and is now visible in the viewer. The user can zoom, pan, download, copy, or share the image using the controls below it.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        prompt: {
-          type: Type.STRING,
-          description: "Detailed text description of the image to generate",
-        },
-        numberOfImages: {
-          type: Type.INTEGER,
-          description: "Number of images to generate (1-4, default: 1)",
-        },
-        aspectRatio: {
-          type: Type.STRING,
-          description: "Image aspect ratio: '1:1' (square), '9:16' (portrait), '16:9' (landscape), '4:3', or '3:4' (default: '1:1')",
-        },
-        imageSize: {
-          type: Type.STRING,
-          description: "Image size: '1K' (1024x1024) or '2K' (2048x2048) (default: '1K')",
-        },
-        outputMimeType: {
-          type: Type.STRING,
-          description: "Output format: 'image/jpeg' or 'image/png' (default: 'image/jpeg')",
-        },
-      },
-      required: ["prompt"],
-    },
-  },
+  // DEPRECATED: imagen.generate tool removed
+  // Image generation is now handled directly by the chat route via pattern detection
+  // before sending to the LLM. This provides faster response times and better control.
+  // See: lib/utils/image-generation-detector.ts and app/api/chat/route.ts
+  // {
+  //   name: "imagen.generate",
+  //   description: "Generate images using Google's Imagen 4.0 model...",
+  //   ...
+  // },
 ];
 
 /**
@@ -429,12 +408,16 @@ export class GeminiClient {
    * @param onFunctionCall - Callback for function calls
    * @param fileSearchStoreNames - Optional array of File Search store names to use
    * @param workspaceRoot - Current workspace root directory (injected into system prompt)
+   * @param restrictionLevel - Access restriction level (unrestricted, home, custom)
+   * @param userHomeDirectory - User's home directory path
    */
   async *streamChat(
     messages: Message[],
     onFunctionCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>,
     fileSearchStoreNames?: string[],
-    workspaceRoot?: string
+    workspaceRoot?: string,
+    restrictionLevel?: 'unrestricted' | 'home' | 'custom',
+    userHomeDirectory?: string
   ): AsyncGenerator<StreamChunk> {
     const MAX_RETRIES = 3;
     const INITIAL_RETRY_DELAY = 1000; // 1 second
@@ -454,30 +437,58 @@ export class GeminiClient {
         }>;
       }> = [];
 
-      // Build dynamic system prompt with current workspace root
+      // Build dynamic system prompt with current workspace root and restriction level
       // CRITICAL: Put workspace root at the VERY TOP so it takes precedence over everything
-      let dynamicSystemPrompt = SYSTEM_PROMPT;
-      if (workspaceRoot) {
-        // Inject current workspace root at the TOP of system prompt with maximum prominence
-        dynamicSystemPrompt = `⚠️ CRITICAL: CURRENT WORKSPACE ROOT ⚠️
+      // Always include workspace root, even if it's '/' (filesystem root)
+      const currentWorkspaceRoot = workspaceRoot || '/';
+      const currentRestrictionLevel = restrictionLevel || 'unrestricted';
+      
+      // Build restriction level description
+      let restrictionInfo = '';
+      if (currentRestrictionLevel === 'unrestricted') {
+        restrictionInfo = `RESTRICTION LEVEL: UNRESTRICTED
+- You have FULL filesystem access
+- You can access any directory on the system
+- The workspace root (${currentWorkspaceRoot}) is your default working directory, but you can navigate anywhere`;
+      } else if (currentRestrictionLevel === 'home') {
+        const homeDir = userHomeDirectory || '~';
+        restrictionInfo = `RESTRICTION LEVEL: HOME DIRECTORY ONLY
+- You are RESTRICTED to the user's home directory: ${homeDir}
+- You CANNOT access directories outside of ${homeDir}
+- All paths must be within ${homeDir} or its subdirectories
+- If the user asks to access a path outside ${homeDir}, explain that you can only access files within the home directory`;
+      } else if (currentRestrictionLevel === 'custom') {
+        restrictionInfo = `RESTRICTION LEVEL: CUSTOM DIRECTORY
+- You are RESTRICTED to the custom directory: ${currentWorkspaceRoot}
+- You CANNOT access directories outside of ${currentWorkspaceRoot}
+- All paths must be within ${currentWorkspaceRoot} or its subdirectories
+- If the user asks to access a path outside ${currentWorkspaceRoot}, explain that you can only access files within the selected workspace directory`;
+      }
+      
+      const dynamicSystemPrompt = `⚠️⚠️⚠️ CRITICAL: CURRENT WORKSPACE CONFIGURATION ⚠️⚠️⚠️
 
-The workspace root has been set to: ${workspaceRoot}
+WORKSPACE ROOT: ${currentWorkspaceRoot}
+
+${restrictionInfo}
 
 THIS IS THE CURRENT WORKING DIRECTORY FOR ALL COMMANDS AND OPERATIONS.
 
-IMPORTANT RULES:
-1. When answering "which directory are we in" or similar questions, ALWAYS answer with: ${workspaceRoot}
-2. When executing commands via exec.run, they run in ${workspaceRoot} by default (unless cwd is specified)
-3. When resolving relative paths, they are resolved relative to ${workspaceRoot}
-4. IGNORE any previous directory information from earlier messages in this conversation
-5. The workspace root may have changed since earlier messages - ALWAYS use the current value shown above
+🚨 ABSOLUTE RULES - THESE OVERRIDE EVERYTHING ELSE 🚨
+1. When answering "which directory are we in" or similar questions, ALWAYS answer with: ${currentWorkspaceRoot}
+   - DO NOT check conversation history for directory information
+   - DO NOT use directory information from previous assistant messages
+   - ALWAYS use the current workspace root shown above: ${currentWorkspaceRoot}
+2. When executing commands via exec.run, they run in ${currentWorkspaceRoot} by default (unless cwd is specified)
+3. When resolving relative paths, they are resolved relative to ${currentWorkspaceRoot}
+4. CRITICAL: IGNORE ALL previous directory information from earlier messages in this conversation
+5. CRITICAL: The workspace root may have changed since earlier messages - ALWAYS use the CURRENT value shown above: ${currentWorkspaceRoot}
+6. RESPECT THE RESTRICTION LEVEL: ${currentRestrictionLevel === 'unrestricted' ? 'You have full access' : 'You are restricted to the workspace root directory and cannot access parent directories'}
 
-If the user asks about the current directory, respond with "${workspaceRoot}" immediately, without checking conversation history.
+⚠️ REMEMBER: If the user asks about the current directory at ANY point in the conversation, respond with "${currentWorkspaceRoot}" immediately. Do NOT reference previous messages that mention a different directory. The workspace root shown above is ALWAYS the correct answer.
 
 ---
 
 ${SYSTEM_PROMPT}`;
-      }
 
       // Add system prompt
       conversationHistory.push({
