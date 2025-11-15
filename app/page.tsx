@@ -2556,16 +2556,20 @@ export default function Home() {
     attemptScroll(0);
   };
 
-  // Auto-scroll to bottom on initial page load
+  // Track if we've scrolled on initial load
+  const hasScrolledOnLoadRef = useRef(false);
+
+  // Auto-scroll to bottom on initial page load (when messages first appear)
   useEffect(() => {
-    if (messages.length > 0 && !isLoading && !isProcessing) {
+    if (!hasScrolledOnLoadRef.current && messages.length > 0 && !isLoading && !isProcessing) {
+      hasScrolledOnLoadRef.current = true;
       // Small delay to ensure DOM is ready
       const timeoutId = setTimeout(() => {
         scrollToBottom(true); // Immediate scroll on load
       }, 100);
       return () => clearTimeout(timeoutId);
     }
-  }, []); // Only run once on mount
+  }, [messages.length, isLoading, isProcessing]);
 
   // Auto-scroll when user sends a message - scroll immediately when user message is added
   useEffect(() => {
