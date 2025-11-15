@@ -155,7 +155,6 @@ export default function RootLayout({
       <html lang="en" className="dark">
         <body className="font-mono antialiased overflow-hidden">
           <WorkspaceProvider>
-            <FloatingAuthButtons />
             <ChatProvider>
               <ChatInputProvider>
                 <SidebarProvider>

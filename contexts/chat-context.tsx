@@ -35,6 +35,7 @@ export interface Chat {
 interface ChatContextType {
   chats: Chat[];
   activeChatId: string | null;
+  isHydrated: boolean;
   createChat: () => string;
   deleteChat: (id: string) => void;
   setActiveChat: (id: string | null) => void;
@@ -225,6 +226,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       value={{
         chats,
         activeChatId,
+        isHydrated,
         createChat,
         deleteChat,
         setActiveChat,

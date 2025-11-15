@@ -19,7 +19,7 @@ import { useChatInput } from "@/contexts/chat-input-context";
 import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { CommandsButton } from "@/components/layout/commands-button";
 import { SignedIn, useAuth } from "@clerk/nextjs";
-import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
+import { TopHeader } from "@/components/layout/top-header";
 import {
   Dialog,
   DialogContent,
@@ -2061,8 +2061,13 @@ export default function Home() {
   const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const scrollAnimationFrameRef = useRef<number | null>(null);
+  const autoScrollDisabledRef = useRef<boolean>(false);
+  const scrollListenersAttachedRef = useRef<Set<HTMLDivElement>>(new Set());
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+  const streamingStartHeightRef = useRef<number>(0);
+  const hasScrolled200pxRef = useRef<boolean>(false);
   const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser, activeMobilePanel, setActiveMobilePanel } = useWorkspace();
-  const { activeChatId, getActiveChat, createChat, updateChatMessages } = useChat();
+  const { activeChatId, getActiveChat, createChat, updateChatMessages, isHydrated } = useChat();
   const { setInsertTextHandler, setSendMessageHandler, sendMessage } = useChatInput();
   const { userId, isLoaded: authLoaded } = useAuth();
   const isMobile = useIsMobile();
@@ -2551,12 +2556,45 @@ export default function Home() {
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
   };
 
+  // Helper function to check distance from bottom and update auto-scroll disabled flag
+  const checkAndUpdateAutoScrollState = (container: HTMLDivElement) => {
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+    // If user has scrolled more than 500px from bottom, disable auto-scroll
+    if (distanceFromBottom > 500) {
+      autoScrollDisabledRef.current = true;
+    } else {
+      // Re-enable auto-scroll when user scrolls back close to bottom
+      autoScrollDisabledRef.current = false;
+    }
+  };
+
+  // Helper function to check if we should allow auto-scroll (checks distance directly)
+  const shouldAllowAutoScroll = (container: HTMLDivElement): boolean => {
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    
+    // Update the flag
+    if (distanceFromBottom > 500) {
+      autoScrollDisabledRef.current = true;
+      return false;
+    } else {
+      autoScrollDisabledRef.current = false;
+      return true;
+    }
+  };
+
   // Simple, reliable scroll to bottom - wait for container to be ready
-  const scrollToBottom = () => {
+  const scrollToBottom = (forceScroll = false) => {
     const attemptScroll = (attempt = 0) => {
       const container = getActiveContainer();
       const endElement = messagesEndRef.current;
-      
+
       if (!container || !endElement) {
         if (attempt < 20) {
           requestAnimationFrame(() => attemptScroll(attempt + 1));
@@ -2564,6 +2602,12 @@ export default function Home() {
           console.warn('[Scroll] Refs not available after max attempts', { attempt });
         }
         return;
+      }
+
+      // Check if auto-scroll should be allowed (checks distance directly)
+      // Skip this check if forceScroll is true (e.g., on initial page load)
+      if (!forceScroll && !shouldAllowAutoScroll(container)) {
+        return; // Don't scroll if user has scrolled up >500px
       }
       
       // Wait for container to have dimensions - CRITICAL for long conversations
@@ -2584,7 +2628,12 @@ export default function Home() {
       // Container is ready - scroll to absolute bottom
       // Use scrollTop assignment for immediate scroll (no animation delay)
       const targetScrollTop = container.scrollHeight;
+      isProgrammaticScrollRef.current = true;
       container.scrollTop = targetScrollTop;
+      // Reset flag after a brief delay to allow scroll event to fire
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 0);
       
       // Verify scroll actually happened
       const actualScrollTop = container.scrollTop;
@@ -2614,6 +2663,12 @@ export default function Home() {
   const lastMessageIdRef = useRef<string | null>(null);
   const hasScrolledOnLoadRef = useRef(false);
   const lastActiveChatIdRef = useRef<string | null>(null);
+  const isHydratedRef = useRef(false);
+
+  // Keep isHydrated ref in sync with actual value
+  useEffect(() => {
+    isHydratedRef.current = isHydrated;
+  }, [isHydrated]);
 
   // Reset scroll refs when switching chats OR on initial mount - CRITICAL FIX for reload/switch scroll bug
   useEffect(() => {
@@ -2629,6 +2684,19 @@ export default function Home() {
     }
     lastActiveChatIdRef.current = activeChatId;
   }, [activeChatId]);
+
+  // CRITICAL: Reset scroll ref when hydration completes to ensure fresh scroll attempt
+  // This handles the case where hydration completes after the initial render
+  useEffect(() => {
+    if (isHydrated && messages.length > 0 && !hasScrolledOnLoadRef.current) {
+      console.log('[Scroll] Hydration complete with messages, ready for scroll attempt', {
+        messagesCount: messages.length,
+        activeChatId
+      });
+      // The scroll effect will handle the actual scrolling
+      // This just ensures we're ready when hydration completes
+    }
+  }, [isHydrated, messages.length, activeChatId]);
 
   // Set up ResizeObserver to detect when container gets dimensions
   // This observer persists and watches for container size changes
@@ -2652,20 +2720,23 @@ export default function Home() {
             containerReadyRef.current = true;
             console.log('[Scroll] Container ready via ResizeObserver', { width, height });
             
+            // Only trigger scroll if hydration is complete
             // If we have messages and haven't scrolled yet, trigger scroll
             // Get current values from the active chat
             const activeChat = getActiveChat();
             const currentMessages = activeChat?.messages || [];
             
-            if (currentMessages.length > 0 && !hasScrolledOnLoadRef.current) {
+            // Use ref to check hydration status without needing it in dependencies
+            if (isHydratedRef.current && currentMessages.length > 0 && !hasScrolledOnLoadRef.current) {
               // Check if container has scrollable content
               if (container.scrollHeight > container.clientHeight) {
                 hasScrolledOnLoadRef.current = true;
                 console.log('[Scroll] ResizeObserver triggered scroll', {
                   scrollHeight: container.scrollHeight,
-                  clientHeight: container.clientHeight
+                  clientHeight: container.clientHeight,
+                  isHydrated: isHydratedRef.current
                 });
-                setTimeout(() => scrollToBottom(), 50);
+                setTimeout(() => scrollToBottom(true), 50);
               }
             }
           }
@@ -2726,72 +2797,172 @@ export default function Home() {
       }
       containerReadyRef.current = false;
     };
-  }, []); // Only set up once - cleanup handled above
+  }, []); // Only set up once - use refs to access latest values in callback
+
+  // Track manual scrolling and disable auto-scroll if user scrolls more than 500px from bottom
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      const container = e.target as HTMLDivElement;
+      if (!container) return;
+
+      // Ignore scroll events that were triggered by programmatic scrolling
+      if (isProgrammaticScrollRef.current) {
+        isProgrammaticScrollRef.current = false;
+        return;
+      }
+
+      // Update auto-scroll state based on distance from bottom
+      checkAndUpdateAutoScrollState(container);
+    };
+
+    const setupScrollListeners = () => {
+      const desktopContainer = messagesContainerRefDesktop.current;
+      const mobileContainer = messagesContainerRefMobile.current;
+
+      if (desktopContainer && !scrollListenersAttachedRef.current.has(desktopContainer)) {
+        desktopContainer.addEventListener('scroll', handleScroll, { passive: true });
+        scrollListenersAttachedRef.current.add(desktopContainer);
+      }
+      if (mobileContainer && mobileContainer !== desktopContainer && !scrollListenersAttachedRef.current.has(mobileContainer)) {
+        mobileContainer.addEventListener('scroll', handleScroll, { passive: true });
+        scrollListenersAttachedRef.current.add(mobileContainer);
+      }
+    };
+
+    // Try to set up immediately
+    setupScrollListeners();
+
+    // Also re-setup periodically in case containers mount later (for hydration)
+    const checkInterval = setInterval(() => {
+      setupScrollListeners();
+    }, 500);
+
+    return () => {
+      clearInterval(checkInterval);
+      const desktopContainer = messagesContainerRefDesktop.current;
+      const mobileContainer = messagesContainerRefMobile.current;
+      if (desktopContainer && scrollListenersAttachedRef.current.has(desktopContainer)) {
+        desktopContainer.removeEventListener('scroll', handleScroll);
+        scrollListenersAttachedRef.current.delete(desktopContainer);
+      }
+      if (mobileContainer && mobileContainer !== desktopContainer && scrollListenersAttachedRef.current.has(mobileContainer)) {
+        mobileContainer.removeEventListener('scroll', handleScroll);
+        scrollListenersAttachedRef.current.delete(mobileContainer);
+      }
+    };
+  }, []); // Set up once
+
+  // Reset auto-scroll disabled state when switching chats
+  useEffect(() => {
+    autoScrollDisabledRef.current = false;
+  }, [activeChatId]);
 
   // Auto-scroll to bottom on page load or when switching chats
   // This effect runs whenever messages load or chat changes
+  // CRITICAL: Wait for hydration to complete before attempting scroll
   useEffect(() => {
+    // Don't attempt scroll until chat data is hydrated from localStorage
+    if (!isHydrated) {
+      console.log('[Scroll] Waiting for chat hydration', { 
+        isHydrated,
+        messagesCount: messages.length,
+        activeChatId
+      });
+      return;
+    }
+
     // Only scroll if we haven't scrolled yet for this chat and there are messages
+    // Add a small delay after hydration to ensure DOM has rendered messages
     if (messages.length > 0 && !hasScrolledOnLoadRef.current && !isLoading && !isProcessing) {
+      // Small delay to ensure messages are rendered in DOM after hydration
+      const scrollDelay = 100;
       const container = getActiveContainer();
       
       // Check if container is ready (has dimensions)
       const checkAndScroll = () => {
-        if (container && container.scrollHeight > 0 && container.clientHeight > 0) {
-          hasScrolledOnLoadRef.current = true;
-          console.log('[Scroll] Container ready, scrolling', { 
-            messagesCount: messages.length, 
-            activeChatId,
-            scrollHeight: container.scrollHeight,
-            clientHeight: container.clientHeight,
-            containerReady: containerReadyRef.current
-          });
-          setTimeout(() => scrollToBottom(), 100);
-          return true;
+        const currentContainer = getActiveContainer();
+        if (!currentContainer) return false;
+        
+        if (currentContainer.scrollHeight > 0 && currentContainer.clientHeight > 0) {
+          // Verify container actually has scrollable content (messages rendered)
+          // OR if messages exist but container is small, still scroll to bottom
+          const hasScrollableContent = currentContainer.scrollHeight > currentContainer.clientHeight;
+          const hasMessages = messages.length > 0;
+          
+          // Scroll if we have scrollable content OR if we have messages (even if they fit in viewport)
+          // The latter ensures we're at the bottom even if all messages fit
+          if (hasScrollableContent || (hasMessages && currentContainer.scrollHeight > 50)) {
+            hasScrolledOnLoadRef.current = true;
+            console.log('[Scroll] Container ready, scrolling', {
+              messagesCount: messages.length,
+              activeChatId,
+              scrollHeight: currentContainer.scrollHeight,
+              clientHeight: currentContainer.clientHeight,
+              hasScrollableContent,
+              containerReady: containerReadyRef.current,
+              isHydrated
+            });
+            setTimeout(() => scrollToBottom(true), 100);
+            return true;
+          } else {
+            // Container has dimensions but messages might not be rendered yet
+            console.log('[Scroll] Container ready but messages may not be rendered yet', {
+              scrollHeight: currentContainer.scrollHeight,
+              clientHeight: currentContainer.clientHeight,
+              messagesCount: messages.length
+            });
+            return false;
+          }
         }
         return false;
       };
 
-      // Try immediately
-      if (!checkAndScroll()) {
+      // Try after a delay to allow DOM to render messages
+      setTimeout(() => {
+        if (!checkAndScroll()) {
         // Container not ready yet - use retry mechanism
         console.log('[Scroll] Waiting for container to be ready', { 
           messagesCount: messages.length,
           hasContainer: !!container,
           scrollHeight: container?.scrollHeight || 0,
           clientHeight: container?.clientHeight || 0,
-          containerReady: containerReadyRef.current
+          containerReady: containerReadyRef.current,
+          isHydrated
         });
         
-        // Retry with increasing delays - ResizeObserver might trigger in between
-        const attemptScroll = (attempt: number) => {
-          if (attempt > 15) {
-            console.warn('[Scroll] Max fallback attempts reached');
-            // Final attempt - force scroll if container exists
-            const finalContainer = getActiveContainer();
-            if (finalContainer) {
-              hasScrolledOnLoadRef.current = true;
-              finalContainer.scrollTop = finalContainer.scrollHeight;
-              console.log('[Scroll] Forced scroll on final attempt');
-            }
-            return;
-          }
-          
-          const delay = 200 + (attempt * 150);
-          setTimeout(() => {
-            if (!hasScrolledOnLoadRef.current && checkAndScroll()) {
-              // Successfully scrolled
+          // Retry with increasing delays - ResizeObserver might trigger in between
+          const attemptScroll = (attempt: number) => {
+            if (attempt > 20) {
+              console.warn('[Scroll] Max fallback attempts reached');
+              // Final attempt - force scroll if container exists
+              const finalContainer = getActiveContainer();
+              if (finalContainer && finalContainer.scrollHeight > 0) {
+                hasScrolledOnLoadRef.current = true;
+                finalContainer.scrollTop = finalContainer.scrollHeight;
+                console.log('[Scroll] Forced scroll on final attempt', {
+                  scrollHeight: finalContainer.scrollHeight,
+                  scrollTop: finalContainer.scrollTop
+                });
+              }
               return;
-            } else if (attempt < 15) {
-              attemptScroll(attempt + 1);
             }
-          }, delay);
-        };
-        
-        attemptScroll(0);
-      }
+            
+            const delay = 150 + (attempt * 100);
+            setTimeout(() => {
+              if (!hasScrolledOnLoadRef.current && checkAndScroll()) {
+                // Successfully scrolled
+                return;
+              } else if (attempt < 20) {
+                attemptScroll(attempt + 1);
+              }
+            }, delay);
+          };
+          
+          attemptScroll(0);
+        }
+      }, scrollDelay);
     }
-  }, [messages.length, isLoading, isProcessing, activeChatId]);
+  }, [messages.length, isLoading, isProcessing, activeChatId, isHydrated]);
 
   // Auto-scroll when new user message is added
   useEffect(() => {
@@ -2801,34 +2972,27 @@ export default function Home() {
       
       // If this is a new message (different ID), scroll
       if (lastMessageId && lastMessageId !== lastMessageIdRef.current) {
-        console.log('[Scroll] New message detected', { 
+        console.log('[Scroll] New message detected', {
           previousId: lastMessageIdRef.current,
           newId: lastMessageId,
           role: lastMessage.role
         });
         lastMessageIdRef.current = lastMessageId;
-        
-        // If it's a user message, scroll immediately
+
+
+        // If it's a user message, scroll it into view
         if (lastMessage.role === "user") {
-          setTimeout(() => {
-            scrollToBottom();
-          }, 200);
+          if (!isLoading && !isProcessing && !autoScrollDisabledRef.current) {
+            setTimeout(() => {
+              scrollToBottom();
+            }, 100);
+          }
         }
       }
       
-      // If streaming (loading/processing), continuously scroll to bottom to follow response
-      if ((isLoading || isProcessing) && lastMessage.role === "assistant") {
-        const container = getActiveContainer();
-        if (container) {
-          // Scroll to bottom immediately when assistant message updates
-          requestAnimationFrame(() => {
-            const maxScrollTop = container.scrollHeight - container.clientHeight;
-            container.scrollTop = maxScrollTop;
-          });
-        }
-      }
+      // NOTE: Removed the scroll-to-bottom on assistant updates - the streaming scroll animation handles positioning
     }
-  }, [messages, isLoading, isProcessing]);
+  }, [messages, isLoading, isProcessing, isMobile]);
 
   // Track previous loading state
   useEffect(() => {
@@ -2836,82 +3000,48 @@ export default function Home() {
     prevIsProcessingRef.current = isProcessing;
   }, [isLoading, isProcessing]);
 
-  // Auto-scroll DOWN during streaming to follow the response as it grows
-  // Keep scrolling DOWN until user's last message reaches ~500px from top (just under header)
+  // Auto-scroll during streaming: scroll to bottom, but stop after 200px of content growth
   useEffect(() => {
-    if ((isLoading || isProcessing) && getActiveContainer() && messagesEndRef.current) {
-      const container = getActiveContainer();
-      
-      if (!container) return;
-      
-      // Cancel any existing animation
-      if (scrollAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(scrollAnimationFrameRef.current);
-      }
-      
-      const targetTop = 500; // Stop when user message is ~500px from top (just under header)
-      const tolerance = 50;
-      const easingFactor = 0.25; // Smooth scrolling speed
-      
-      const animate = () => {
-        // Re-check conditions on each frame
-        const currentContainer = getActiveContainer();
-        
-        // Stop if loading stopped or container is missing
-        if (!currentContainer || (!isLoading && !isProcessing)) {
-          scrollAnimationFrameRef.current = null;
-          return;
-        }
-        
-        const currentScrollTop = currentContainer.scrollTop;
-        const maxScrollTop = currentContainer.scrollHeight - currentContainer.clientHeight;
-        
-        // Check if user message reached target position (just under header)
-        const messageElement = lastUserMessageRef.current;
-        if (messageElement) {
-          const containerRect = currentContainer.getBoundingClientRect();
-          const messageRect = messageElement.getBoundingClientRect();
-          const messageTopFromContainer = messageRect.top - containerRect.top;
-          
-          // Stop if user message is at target position (~500px from top) - we've scrolled enough
-          if (messageTopFromContainer <= targetTop + tolerance) {
-            scrollAnimationFrameRef.current = null;
-            return;
-          }
-        }
-        
-        // Calculate distance to bottom
-        const distanceToBottom = maxScrollTop - currentScrollTop;
-        
-        // Stop if already at bottom (or very close)
-        if (distanceToBottom < 1) {
-          currentContainer.scrollTop = maxScrollTop;
-          scrollAnimationFrameRef.current = null;
-          return;
-        }
-        
-        // Scroll DOWN (increase scrollTop) to follow the response as it grows
-        const scrollDelta = Math.max(2, distanceToBottom * easingFactor);
-        currentContainer.scrollTop = currentScrollTop + scrollDelta;
-        scrollAnimationFrameRef.current = requestAnimationFrame(animate);
-      };
-      
-      scrollAnimationFrameRef.current = requestAnimationFrame(animate);
-    } else {
-      // Clean up animation when conditions are no longer met
-      if (scrollAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(scrollAnimationFrameRef.current);
-        scrollAnimationFrameRef.current = null;
-      }
+    if (!(isLoading || isProcessing)) {
+      // Reset when streaming ends
+      streamingStartHeightRef.current = 0;
+      hasScrolled200pxRef.current = false;
+      return;
     }
-    
-    return () => {
-      if (scrollAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(scrollAnimationFrameRef.current);
-        scrollAnimationFrameRef.current = null;
-      }
-    };
-  }, [messages, isLoading, isProcessing]);
+
+    const container = getActiveContainer();
+    if (!container) return;
+
+    // Capture initial height when streaming starts
+    if (streamingStartHeightRef.current === 0) {
+      streamingStartHeightRef.current = container.scrollHeight;
+      hasScrolled200pxRef.current = false;
+      console.log('[Scroll] Streaming started, initial height:', streamingStartHeightRef.current);
+    }
+
+    // Check if content has grown by 600px
+    const contentGrowth = container.scrollHeight - streamingStartHeightRef.current;
+
+    if (contentGrowth >= 600) {
+      hasScrolled200pxRef.current = true;
+      console.log('[Scroll] Content grew by 600px, stopping auto-scroll', {
+        startHeight: streamingStartHeightRef.current,
+        currentHeight: container.scrollHeight,
+        growth: contentGrowth
+      });
+      return; // Stop auto-scrolling
+    }
+
+    // Still within 200px - continue auto-scrolling
+    if (!autoScrollDisabledRef.current && !hasScrolled200pxRef.current) {
+      isProgrammaticScrollRef.current = true;
+      container.scrollTop = container.scrollHeight;
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 0);
+      console.log('[Scroll] Auto-scrolling, growth:', contentGrowth);
+    }
+  }, [isLoading, isProcessing, messages]);
 
   // Ensure there's an active chat when component mounts
   useEffect(() => {
@@ -3569,6 +3699,9 @@ export default function Home() {
 
   return (
     <>
+      {/* Top Header - visible in both chat and editor views */}
+      <TopHeader />
+      
       {/* Desktop Layout - hidden on mobile */}
       <div className="hidden md:block h-full">
         <SplitView>
@@ -3663,7 +3796,7 @@ export default function Home() {
             <p className="text-yellow-100 text-sm">Start a conversation...</p>
           </div>
         ) : (
-          <div className="mx-auto max-w-5xl w-full pt-32 pb-24">
+          <div className="mx-auto max-w-5xl w-full pt-32 pb-0">
             {messages.map((message, index) => {
               // Only show assistant messages if they have content (avoid showing empty streaming placeholders)
               // Show if: user message, has content, has formatted search, has media, has tool calls, OR is currently loading
@@ -3712,10 +3845,10 @@ export default function Home() {
               const hasTable = message.content && /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/.test(message.content);
 
               return (
+              <React.Fragment key={messageKey}>
               <div
-                key={messageKey}
                 ref={isLastUserMessage ? lastUserMessageRef : null}
-                className={`flex mb-8 ${
+                className={`flex ${isLastUserMessage && message.role === "user" ? "" : "mb-8"} ${
                   message.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
@@ -4158,6 +4291,7 @@ export default function Home() {
                   )}
                 </div>
               </div>
+              </React.Fragment>
               );
             })}
             {/* Processing Indicator - only show if no assistant message exists yet (before first tool call or content) */}
@@ -4182,7 +4316,7 @@ export default function Home() {
       <div 
         className="flex-shrink-0 border-t border-background bg-background relative z-10 mobile-safari-input-fix"
         style={{
-          paddingTop: '1rem',
+          paddingTop: '10px',
           paddingLeft: '1rem',
           paddingRight: '1rem',
           paddingBottom: 'calc(1rem + max(3rem, env(safe-area-inset-bottom, 3rem)))',
@@ -4225,12 +4359,14 @@ export default function Home() {
             <Textarea
               ref={textareaRef}
               placeholder="Type your message..."
-              className="min-h-[60px] max-h-[200px] resize-none pl-14 pr-20 py-3 leading-normal text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+              className="min-h-[60px] max-h-[200px] resize-none pl-4 pr-20 text-lg text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
               style={{
                 wordWrap: 'break-word',
                 overflowWrap: 'break-word',
                 whiteSpace: 'pre-wrap',
-                lineHeight: '1.5',
+                lineHeight: '1.6',
+                paddingTop: '18px',
+                paddingBottom: '18px',
               }}
               rows={1}
               value={input}
@@ -4240,14 +4376,6 @@ export default function Home() {
               }}
               onKeyDown={handleKeyDown}
               disabled={isLoading || !authLoaded || !userId}
-            />
-            <ArrowUp
-              onClick={() => handleSubmit()}
-              className={`absolute top-1/2 -translate-y-1/2 left-3 h-6 w-6 text-orange-500 transition-opacity ${
-                isLoading || !authLoaded || !userId || (!input.trim() && attachedPDFs.length === 0)
-                  ? "cursor-not-allowed opacity-50"
-                  : "cursor-pointer hover:opacity-80"
-              }`}
             />
             <div className="absolute top-1/2 -translate-y-1/2 right-3 flex items-center gap-2">
               {/* Browser feature disabled */}
@@ -4269,9 +4397,6 @@ export default function Home() {
                 onUploadingChange={setUploadingPDFs}
                 disabled={!authLoaded || !userId}
               />
-              <SignedIn>
-                {!editorState.isOpen && <UserButtonWithClear />}
-              </SignedIn>
             </div>
           </div>
         </div>
@@ -4414,7 +4539,7 @@ export default function Home() {
                 <p className="text-yellow-100 text-sm">Start a conversation...</p>
               </div>
             ) : (
-              <div className="mx-auto max-w-5xl w-full pt-32 pb-24">
+              <div className="mx-auto max-w-5xl w-full pt-32 pb-0">
                 {messages.map((message, index) => {
                   // Only show assistant messages if they have content (avoid showing empty streaming placeholders)
                   // Show if: user message, has content, has formatted search, has media, has tool calls, OR is currently loading
@@ -4463,10 +4588,10 @@ export default function Home() {
                   const hasTable = message.content && /(\|[^\n]+\|\n\|[\s\-:|]+\|\n(?:\|[^\n]+\|\n?)+)/.test(message.content);
 
                   return (
+                  <React.Fragment key={messageKey}>
                   <div
-                    key={messageKey}
                     ref={isLastUserMessage ? lastUserMessageRef : null}
-                    className={`flex mb-8 ${
+                    className={`flex ${isLastUserMessage && message.role === "user" ? "" : "mb-8"} ${
                       message.role === "user" ? "justify-end" : "justify-start"
                     }`}
                   >
@@ -4909,6 +5034,7 @@ export default function Home() {
                       )}
                     </div>
                   </div>
+                  </React.Fragment>
                   );
                 })}
                 {/* Processing Indicator - only show if no assistant message exists yet (before first tool call or content) */}
@@ -4932,7 +5058,7 @@ export default function Home() {
             <div 
               className="flex-shrink-0 border-t border-background bg-background relative z-10 mobile-safari-input-fix"
               style={{
-                paddingTop: '1rem',
+                paddingTop: '10px',
                 paddingLeft: '1rem',
                 paddingRight: '1rem',
                 paddingBottom: 'calc(1rem + max(5rem, env(safe-area-inset-bottom, 5rem)))',
@@ -4973,12 +5099,14 @@ export default function Home() {
                   <Textarea
                     ref={textareaRef}
                     placeholder="Type your message..."
-                    className="min-h-[60px] max-h-[200px] resize-none pl-14 pr-20 py-3 leading-normal text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                    className="min-h-[60px] max-h-[200px] resize-none pl-4 pr-20 text-lg text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                     style={{
                       wordWrap: 'break-word',
                       overflowWrap: 'break-word',
                       whiteSpace: 'pre-wrap',
-                      lineHeight: '1.5',
+                      lineHeight: '1.6',
+                      paddingTop: '18px',
+                      paddingBottom: '18px',
                     }}
                     rows={1}
                     value={input}
@@ -4988,14 +5116,6 @@ export default function Home() {
                     }}
                     onKeyDown={handleKeyDown}
                     disabled={isLoading || !authLoaded || !userId}
-                  />
-                  <ArrowUp
-                    onClick={() => handleSubmit()}
-                    className={`absolute top-1/2 -translate-y-1/2 left-3 h-6 w-6 text-orange-500 transition-opacity ${
-                      isLoading || !authLoaded || !userId || (!input.trim() && attachedPDFs.length === 0)
-                        ? "cursor-not-allowed opacity-50"
-                        : "cursor-pointer hover:opacity-80"
-                    }`}
                   />
                   <div className="absolute top-1/2 -translate-y-1/2 right-3 flex items-center gap-2">
                     <CommandsButton className="h-8 w-8 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-accent transition-all duration-200" />
@@ -5007,9 +5127,6 @@ export default function Home() {
                       onUploadingChange={setUploadingPDFs}
                       disabled={!authLoaded || !userId}
                     />
-                    <SignedIn>
-                      {!editorState.isOpen && <UserButtonWithClear />}
-                    </SignedIn>
                   </div>
                 </div>
               </div>
