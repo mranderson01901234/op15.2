@@ -116,16 +116,16 @@ export function TopHeader() {
   const displayRoot = workspaceRoot?.startsWith('/') ? workspaceRoot.slice(1) : workspaceRoot;
 
   return (
-    <div className="fixed top-0 right-4 z-50 flex items-center gap-3 py-1.5">
+    <div className="fixed top-4 right-4 z-[100] flex items-center gap-3">
       {/* Signed Out: Show Sign In / Start for Free */}
       <SignedOut>
         <SignInButton mode="modal">
-          <button className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors">
+          <button className="px-4 py-2 text-sm font-medium bg-sidebar text-sidebar-foreground rounded-md hover:bg-sidebar/90 transition-colors border border-border/50 shadow-lg">
             Sign in
           </button>
         </SignInButton>
         <SignUpButton mode="modal">
-          <button className="px-2 py-1 text-xs font-medium bg-white text-black rounded hover:bg-white/90 transition-colors">
+          <button className="px-4 py-2 text-sm font-medium bg-white text-black rounded-md hover:bg-white/90 transition-colors shadow-lg font-semibold">
             Start for free
           </button>
         </SignUpButton>

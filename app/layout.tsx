@@ -166,6 +166,7 @@ export default function RootLayout({
                       minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
                     }}
                   >
+                    <FloatingAuthButtons />
                     {children}
                   </SidebarInset>
                 </SidebarProvider>
