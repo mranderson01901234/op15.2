@@ -487,10 +487,10 @@ REMEMBER: The workspace root shown above (${currentWorkspaceRoot}) is the ONLY c
               
               return result;
             },
-            ragStoreNames,
-            context.workspaceRoot || '/', // Pass current workspace root to inject into system prompt (always pass, default to '/')
-            context.restrictionLevel, // Pass restriction level (unrestricted, home, custom)
-            context.userHomeDirectory // Pass user home directory for home restriction level
+            ragStoreNames || undefined,
+            context.workspaceRoot || '/',
+            context.restrictionLevel || undefined,
+            context.userHomeDirectory || undefined
           )) {
             let data: string;
 
