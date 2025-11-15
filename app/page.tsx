@@ -2580,57 +2580,67 @@ export default function Home() {
         console.log('[Scroll Debug] Scroll-to-top triggered - starting animation frames');
       }
       
-      // Use multiple requestAnimationFrames + delay to ensure DOM has fully updated
-      // This ensures the assistant message placeholder has been added
+      // Efficient retry mechanism: wait for container to have dimensions
+      const attemptScroll = (attempt = 0) => {
+        const messageElement = lastUserMessageRef.current;
+        const container = messagesContainerRef.current;
+        
+        if (!messageElement || !container) {
+          if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+            console.warn('[Scroll Debug] Refs not available:', { attempt });
+          }
+          if (attempt < 10) {
+            requestAnimationFrame(() => attemptScroll(attempt + 1));
+          }
+          return;
+        }
+        
+        const containerRect = container.getBoundingClientRect();
+        const messageRect = messageElement.getBoundingClientRect();
+        
+        // Wait for container to have proper dimensions (critical for production)
+        if (containerRect.height === 0 || container.scrollHeight === 0) {
+          if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+            console.log('[Scroll Debug] Container not ready, retrying:', {
+              attempt,
+              containerHeight: containerRect.height,
+              scrollHeight: container.scrollHeight
+            });
+          }
+          if (attempt < 20) {
+            requestAnimationFrame(() => attemptScroll(attempt + 1));
+          }
+          return;
+        }
+        
+        // Container is ready - calculate scroll position
+        const containerPadding = 16; // p-4 = 16px
+        const currentScrollTop = container.scrollTop;
+        const messageOffsetFromContainerTop = messageRect.top - containerRect.top;
+        const targetScrollTop = currentScrollTop + messageOffsetFromContainerTop - containerPadding;
+        
+        if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
+          console.log('[Scroll Debug] Executing scroll:', {
+            attempt,
+            currentScrollTop,
+            messageOffsetFromContainerTop,
+            targetScrollTop,
+            containerHeight: containerRect.height,
+            containerScrollHeight: container.scrollHeight
+          });
+        }
+        
+        // Scroll DOWN (increase scrollTop) to move the user message UP to the top
+        container.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: "smooth"
+        });
+      };
+      
+      // Start with double RAF for DOM readiness, then retry until container is ready
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          setTimeout(() => {
-            const messageElement = lastUserMessageRef.current;
-            const container = messagesContainerRef.current;
-            
-            if (!messageElement || !container) {
-              if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
-                console.warn('[Scroll Debug] Refs not available after delay:', {
-                  hasMessageElement: !!messageElement,
-                  hasContainer: !!container
-                });
-              }
-              return;
-            }
-            
-            // Use getBoundingClientRect for more reliable positioning
-            const containerRect = container.getBoundingClientRect();
-            const messageRect = messageElement.getBoundingClientRect();
-            
-            // Calculate how much we need to scroll DOWN (increase scrollTop) to move content UP
-            // This positions the user message at the top of the visible area
-            const containerPadding = 16; // p-4 = 16px
-            const currentScrollTop = container.scrollTop;
-            const messageOffsetFromContainerTop = messageRect.top - containerRect.top;
-            const targetScrollTop = currentScrollTop + messageOffsetFromContainerTop - containerPadding;
-            
-            if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
-              console.log('[Scroll Debug] Executing scroll:', {
-                currentScrollTop,
-                messageOffsetFromContainerTop,
-                targetScrollTop,
-                containerHeight: containerRect.height,
-                containerScrollHeight: container.scrollHeight,
-                messageTop: messageRect.top,
-                containerTop: containerRect.top
-              });
-            }
-            
-            // Scroll DOWN (increase scrollTop) to move the user message UP to the top
-            container.scrollTo({
-              top: Math.max(0, targetScrollTop),
-              behavior: "smooth"
-            });
-            
-            if (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll')) {
-              console.log('[Scroll Debug] Scroll command executed');
-            }
-          }, 150); // Delay to ensure DOM is fully updated and assistant message is rendered
+          attemptScroll(0);
         });
       });
     } else if (isLoadingStarted && (process.env.NODE_ENV === 'development' || window.location.search.includes('debug=scroll'))) {
