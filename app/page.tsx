@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, Fragment } from "react";
+import React, { useState, useRef, useEffect, Fragment, useCallback } from "react";
 import { flushSync } from "react-dom";
 import { ArrowUp, X, Copy, ThumbsUp, ThumbsDown, Volume2, Pause, Play, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -73,6 +73,15 @@ interface FormattedSearchData {
 }
 
 // Message interface is now imported from chat-context, but keeping local types for compatibility
+interface FileListEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size?: string;
+  modified?: string;
+  icon?: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -88,6 +97,11 @@ interface Message {
   formattedSearch?: FormattedSearchData;
   userQuery?: string; // Store the original user query for summary
   timestamp?: number;
+  fileList?: {
+    path: string;
+    entries: FileListEntry[];
+    total: number;
+  };
 }
 
 // Format timestamp for display
@@ -969,6 +983,77 @@ function CollapsibleCodeBlock({
   );
 }
 
+// File list display component with collapsible table
+function FileListDisplay({
+  fileList,
+  handleFileOpen
+}: {
+  fileList: { path: string; entries: FileListEntry[]; total: number };
+  handleFileOpen?: (path: string) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const displayLimit = 5;
+  const visibleEntries = isExpanded ? fileList.entries : fileList.entries.slice(0, displayLimit);
+  const hasMore = fileList.entries.length > displayLimit;
+
+  return (
+    <div className="my-4 rounded-lg border border-border/40 overflow-hidden bg-muted/10">
+      {/* Header */}
+      <div className="px-4 py-2 bg-muted/30 border-b border-border/30 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">📁 {fileList.path}</span>
+          <span className="text-xs text-muted-foreground">({fileList.total} items)</span>
+        </div>
+        {hasMore && (
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-xs text-primary hover:text-primary/80 flex items-center gap-1"
+          >
+            {isExpanded ? (
+              <>
+                <ChevronUp className="h-3 w-3" />
+                Show less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-3 w-3" />
+                Show {fileList.entries.length - displayLimit} more
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* File/Directory list */}
+      <div className="divide-y divide-border/20">
+        {visibleEntries.map((entry, idx) => (
+          <div
+            key={`${entry.path}-${idx}`}
+            className={`px-4 py-2 flex items-center justify-between hover:bg-muted/30 transition-colors ${
+              entry.type === 'file' && handleFileOpen ? 'cursor-pointer' : ''
+            }`}
+            onClick={() => {
+              if (entry.type === 'file' && handleFileOpen) {
+                handleFileOpen(entry.path);
+              }
+            }}
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className="text-sm">{entry.icon || (entry.type === 'directory' ? '📁' : '📄')}</span>
+              <span className="text-sm font-medium truncate">{entry.name}</span>
+              {entry.type === 'directory' && <span className="text-xs text-muted-foreground">/</span>}
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+              {entry.size && <span>{entry.size}</span>}
+              {entry.modified && <span>{entry.modified}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Single tool execution display - clean and technical
 function ToolExecutionStep({
   name,
@@ -1142,7 +1227,12 @@ function formatMessageContent(content: string, openFile?: (path: string, content
     } else {
       // Process text content - normalize multiple consecutive newlines to max 2 (one paragraph break)
       // This prevents huge gaps from multiple consecutive empty lines
-      const normalizedContent = segment.content.replace(/\n{3,}/g, '\n\n');
+      let normalizedContent = segment.content.replace(/\n{3,}/g, '\n\n');
+      
+      // Remove summary text patterns like "I found X files and Y directories" or "Found X files and Y directories"
+      normalizedContent = normalizedContent.replace(/I\s+found\s+\d+\s+files?\s+and\s+\d+\s+directories?\s+in\s+[^\n:]+:?\s*/gi, '');
+      normalizedContent = normalizedContent.replace(/Found\s+\d+\s+files?\s+and\s+\d+\s+directories?[^\n]*\s*/gi, '');
+      normalizedContent = normalizedContent.replace(/I\s+found\s+\d+\s+files?\s+and\s+\d+\s+directories?\s*[:\n]/gi, '');
       
       // Parse tables first - extract tables and replace with placeholders
       // Markdown table format: | Header | Header |\n|-------|-------|\n| Cell | Cell |
@@ -1154,15 +1244,19 @@ function formatMessageContent(content: string, openFile?: (path: string, content
       
       const tables: Array<{ headers: string[]; rows: string[][]; placeholder: string; start: number; end: number }> = [];
       let tableIndex = 0;
-      const tableMatches: Array<{ text: string; start: number; end: number }> = [];
+      const tableMatches: Array<{ text: string; start: number; end: number; normalized: string }> = [];
       
       // Collect all table matches first using primary regex
       let tableMatch;
       while ((tableMatch = tableRegex1.exec(normalizedContent)) !== null) {
+        const tableText = tableMatch[1];
+        // Normalize table text for comparison (remove extra whitespace)
+        const normalizedTable = tableText.replace(/\s+/g, ' ').trim();
         tableMatches.push({
-          text: tableMatch[1],
+          text: tableText,
           start: tableMatch.index,
-          end: tableMatch.index + tableMatch[1].length
+          end: tableMatch.index + tableText.length,
+          normalized: normalizedTable
         });
       }
       
@@ -1174,7 +1268,79 @@ function formatMessageContent(content: string, openFile?: (path: string, content
           const lines = potentialTable.split('\n').filter(l => l.trim() && l.includes('|'));
           // Only consider it a table if it has at least 2 rows with pipes
           if (lines.length >= 2) {
+            const normalizedTable = potentialTable.replace(/\s+/g, ' ').trim();
             tableMatches.push({
+              text: potentialTable,
+              start: tableMatch.index,
+              end: tableMatch.index + potentialTable.length,
+              normalized: normalizedTable
+            });
+          }
+        }
+      }
+      
+      // Remove duplicate tables - keep only the first occurrence of each unique table
+      const seenTables = new Set<string>();
+      const uniqueTableMatches: Array<{ text: string; start: number; end: number }> = [];
+      const duplicateTableRanges: Array<{ text: string; start: number; end: number }> = [];
+      
+      for (const match of tableMatches) {
+        if (!seenTables.has(match.normalized)) {
+          seenTables.add(match.normalized);
+          uniqueTableMatches.push({
+            text: match.text,
+            start: match.start,
+            end: match.end
+          });
+        } else {
+          // Mark this as a duplicate to remove from content
+          duplicateTableRanges.push({
+            text: match.text,
+            start: match.start,
+            end: match.end
+          });
+        }
+      }
+      
+      // Remove duplicate tables from normalizedContent
+      // Sort duplicate ranges by start position (descending) to remove from end to start
+      duplicateTableRanges.sort((a, b) => b.start - a.start);
+      
+      // Build new content without duplicates
+      // Since we'll re-parse tables after cleaning, we can remove duplicates one by one
+      let cleanedContent = normalizedContent;
+      for (const range of duplicateTableRanges) {
+        // Find the table text in cleanedContent (search for it since indices may have shifted)
+        const tableIndex = cleanedContent.indexOf(range.text);
+        if (tableIndex !== -1) {
+          const before = cleanedContent.substring(0, tableIndex);
+          const after = cleanedContent.substring(tableIndex + range.text.length);
+          // Remove the duplicate table and clean up surrounding whitespace
+          cleanedContent = (before.trimEnd() + '\n' + after.trimStart()).trim();
+        }
+      }
+      normalizedContent = cleanedContent;
+      
+      // Re-parse tables from cleaned content to get correct indices
+      const cleanedTableMatches: Array<{ text: string; start: number; end: number }> = [];
+      tableRegex1.lastIndex = 0;
+      // Reuse existing tableMatch variable
+      while ((tableMatch = tableRegex1.exec(normalizedContent)) !== null) {
+        cleanedTableMatches.push({
+          text: tableMatch[1],
+          start: tableMatch.index,
+          end: tableMatch.index + tableMatch[1].length
+        });
+      }
+      
+      // Fallback: try alternative regex if no matches found
+      if (cleanedTableMatches.length === 0) {
+        tableRegex2.lastIndex = 0;
+        while ((tableMatch = tableRegex2.exec(normalizedContent)) !== null) {
+          const potentialTable = tableMatch[1];
+          const lines = potentialTable.split('\n').filter(l => l.trim() && l.includes('|'));
+          if (lines.length >= 2) {
+            cleanedTableMatches.push({
               text: potentialTable,
               start: tableMatch.index,
               end: tableMatch.index + potentialTable.length
@@ -1183,9 +1349,12 @@ function formatMessageContent(content: string, openFile?: (path: string, content
         }
       }
       
+      // Use cleaned table matches
+      const finalTableMatches = cleanedTableMatches;
+      
       // Process tables in reverse order to preserve indices when replacing
-      for (let i = tableMatches.length - 1; i >= 0; i--) {
-        const match = tableMatches[i];
+      for (let i = finalTableMatches.length - 1; i >= 0; i--) {
+        const match = finalTableMatches[i];
         const tableText = match.text;
         const tableLines = tableText.split('\n').filter(l => l.trim() && l.includes('|'));
         
@@ -2055,6 +2224,98 @@ export default function Home() {
     return ref.current;
   };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const shouldFocusRef = useRef(false);
+  
+  // Force focus function that finds and focuses the ACTUALLY VISIBLE textarea
+  const forceFocusTextarea = useCallback(() => {
+    const findVisibleTextarea = (): HTMLTextAreaElement | null => {
+      // Find ALL textareas in the document
+      const allTextareas = document.querySelectorAll('textarea[placeholder="Type your message..."]');
+      
+      // Find the one that's actually visible
+      for (const textarea of allTextareas) {
+        const el = textarea as HTMLTextAreaElement;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        
+        // Check if this textarea is visible
+        if (
+          rect.width > 0 && 
+          rect.height > 0 && 
+          style.display !== 'none' && 
+          style.visibility !== 'hidden' &&
+          !el.disabled
+        ) {
+          return el;
+        }
+      }
+      
+      // Fallback: check ref if querySelector didn't work
+      if (textareaRef.current) {
+        const rect = textareaRef.current.getBoundingClientRect();
+        const style = window.getComputedStyle(textareaRef.current);
+        if (rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden') {
+          return textareaRef.current;
+        }
+      }
+      
+      return null;
+    };
+
+    const attemptFocus = () => {
+      const textarea = findVisibleTextarea();
+      if (!textarea) return false;
+      if (textarea.disabled) return false;
+      
+      // Focus it - DON'T use preventScroll, we want the visual focus indicator
+      textarea.focus();
+      
+      // Verify it worked by checking activeElement
+      const isFocused = document.activeElement === textarea;
+      
+      if (!isFocused) {
+        // If focus didn't work, try click (for mobile)
+        textarea.click();
+        textarea.focus();
+        return document.activeElement === textarea;
+      }
+      
+      return true;
+    };
+    
+    // Try immediately
+    if (attemptFocus()) return;
+    
+    // Try with delays if immediate didn't work
+    const delays = [10, 50, 100, 200, 300, 500];
+    delays.forEach((delay) => {
+      setTimeout(() => {
+        attemptFocus();
+      }, delay);
+    });
+  }, []);
+
+  const textareaCallbackRef = useCallback((node: HTMLTextAreaElement | null) => {
+    textareaRef.current = node;
+    // Immediately focus when textarea is mounted/rendered (works for BOTH desktop and mobile)
+    if (node && !node.disabled) {
+      shouldFocusRef.current = true;
+      // Focus immediately and verify
+      setTimeout(() => {
+        if (node && !node.disabled) {
+          const rect = node.getBoundingClientRect();
+          const style = window.getComputedStyle(node);
+          if (rect.width > 0 && rect.height > 0 && style.display !== 'none') {
+            node.focus();
+            // Double-check focus worked
+            if (document.activeElement !== node) {
+              node.focus();
+            }
+          }
+        }
+      }, 0);
+    }
+  }, []);
   const lastUserMessageRef = useRef<HTMLDivElement>(null);
   const prevIsLoadingRef = useRef(false);
   const prevIsProcessingRef = useRef(false);
@@ -2168,6 +2429,7 @@ export default function Home() {
   // Ensure component is mounted (client-side only) to prevent hydration issues
   useEffect(() => {
     setIsMounted(true);
+    shouldFocusRef.current = true; // Set focus flag on mount
     // Initialize speech synthesis (browser native, no external calls)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       speechSynthesisRef.current = window.speechSynthesis;
@@ -3051,10 +3313,77 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on mount
 
-  // Clear input when switching chats
+  // Clear input when switching chats and focus textarea
   useEffect(() => {
     setInput("");
+    shouldFocusRef.current = true;
+    
+    // Aggressively focus when chat changes - multiple attempts with increasing delays
+    const focusAttempts = [0, 50, 100, 200, 300, 500, 800];
+    focusAttempts.forEach((delay) => {
+      setTimeout(() => {
+        // Find visible textarea directly in DOM
+        const allTextareas = document.querySelectorAll('textarea[placeholder="Type your message..."]');
+        for (const textarea of allTextareas) {
+          const el = textarea as HTMLTextAreaElement;
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          
+          if (
+            rect.width > 0 && 
+            rect.height > 0 && 
+            style.display !== 'none' && 
+            style.visibility !== 'hidden' &&
+            !el.disabled
+          ) {
+            el.focus();
+            // Verify focus worked
+            if (document.activeElement === el) {
+              return; // Success, stop trying
+            }
+          }
+        }
+      }, delay);
+    });
   }, [activeChatId]);
+
+  // Listen for new chat creation events and focus textarea
+  useEffect(() => {
+    const handleNewChatCreated = () => {
+      shouldFocusRef.current = true;
+      
+      // Aggressively find and focus the visible textarea
+      const focusAttempts = [0, 50, 100, 200, 300, 500, 800];
+      focusAttempts.forEach((delay) => {
+        setTimeout(() => {
+          // Find visible textarea directly in DOM - don't rely on ref
+          const allTextareas = document.querySelectorAll('textarea[placeholder="Type your message..."]');
+          for (const textarea of allTextareas) {
+            const el = textarea as HTMLTextAreaElement;
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            
+            if (
+              rect.width > 0 && 
+              rect.height > 0 && 
+              style.display !== 'none' && 
+              style.visibility !== 'hidden' &&
+              !el.disabled
+            ) {
+              el.focus();
+              // Verify focus worked
+              if (document.activeElement === el) {
+                return; // Success, stop trying
+              }
+            }
+          }
+        }, delay);
+      });
+    };
+
+    window.addEventListener('newChatCreated', handleNewChatCreated);
+    return () => window.removeEventListener('newChatCreated', handleNewChatCreated);
+  }, []);
 
   // Listen for workspace root changes and ensure LLM always has the latest workspace root
   // This ensures that when workspace root changes mid-conversation or when switching conversations,
@@ -3120,12 +3449,155 @@ export default function Home() {
   }, [imageState.isOpen]);
 
   // Auto-focus textarea on mount and after sending messages
+  // Always focus when input is cleared (message sent), when not loading, or when chat changes
   useEffect(() => {
-    if (!isLoading && textareaRef.current) {
-      textareaRef.current.focus();
-      autoResizeTextarea();
+    if (textareaRef.current && (input === "" || !isLoading)) {
+      // Small delay to ensure DOM is ready
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            autoResizeTextarea();
+          }
+        }, 0);
+      });
     }
-  }, [isLoading, messages.length]);
+  }, [isLoading, messages.length, input, activeChatId]);
+
+  // Focus textarea on initial mount and when hydrated
+  // This ensures focus on page load/reload
+  useEffect(() => {
+    if (!isHydrated || !isMounted || !authLoaded) return;
+    
+    shouldFocusRef.current = true;
+    // Try multiple times with increasing delays to ensure focus happens
+    setTimeout(() => forceFocusTextarea(), 0);
+    setTimeout(() => forceFocusTextarea(), 100);
+    setTimeout(() => forceFocusTextarea(), 300);
+    setTimeout(() => forceFocusTextarea(), 500);
+    setTimeout(() => forceFocusTextarea(), 1000);
+  }, [isHydrated, isMounted, authLoaded, forceFocusTextarea]);
+
+  // Also focus when auth loads and textarea becomes enabled
+  useEffect(() => {
+    if (authLoaded && userId) {
+      shouldFocusRef.current = true;
+      setTimeout(() => forceFocusTextarea(), 100);
+      setTimeout(() => forceFocusTextarea(), 300);
+    }
+  }, [authLoaded, userId, forceFocusTextarea]);
+
+  // Aggressive focus on window focus/blur events - ensures focus after page reload
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      if (shouldFocusRef.current) {
+        forceFocusTextarea();
+      }
+    };
+
+    // Focus immediately on load
+    handleWindowFocus();
+    
+    // Also listen for focus events
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('load', handleWindowFocus);
+    
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('load', handleWindowFocus);
+    };
+  }, [forceFocusTextarea]);
+
+  // ALWAYS keep textarea focused unless user clicks into another input/textarea
+  useEffect(() => {
+    const findVisibleTextarea = (): HTMLTextAreaElement | null => {
+      // Find ALL textareas with the chat placeholder
+      const allTextareas = document.querySelectorAll('textarea[placeholder="Type your message..."]');
+      
+      // Find the one that's actually visible
+      for (const textarea of allTextareas) {
+        const el = textarea as HTMLTextAreaElement;
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        
+        if (
+          rect.width > 0 && 
+          rect.height > 0 && 
+          style.display !== 'none' && 
+          style.visibility !== 'hidden' &&
+          !el.disabled
+        ) {
+          return el;
+        }
+      }
+      
+      return null;
+    };
+
+    const handleFocusChange = () => {
+      const activeElement = document.activeElement;
+      const textarea = findVisibleTextarea();
+      
+      // If no visible textarea or disabled, don't do anything
+      if (!textarea || textarea.disabled) return;
+      
+      // If focus is already on the textarea, we're good
+      if (activeElement === textarea) return;
+      
+      // If focus is on another input/textarea/editable element, allow it
+      if (activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.getAttribute('contenteditable') === 'true' ||
+        activeElement.isContentEditable
+      )) {
+        // User clicked into another input - allow it
+        return;
+      }
+      
+      // Focus is somewhere else (button, div, etc.) - refocus textarea
+      setTimeout(() => {
+        const visibleTextarea = findVisibleTextarea();
+        if (visibleTextarea && !visibleTextarea.disabled) {
+          visibleTextarea.focus();
+        }
+      }, 0);
+    };
+
+    // Listen for focus changes
+    document.addEventListener('focusin', handleFocusChange);
+    document.addEventListener('click', handleFocusChange);
+    
+    // Also check periodically (fallback) - but only if shouldFocusRef is true
+    const intervalId = setInterval(() => {
+      if (!shouldFocusRef.current) return;
+      
+      const activeElement = document.activeElement;
+      const textarea = findVisibleTextarea();
+      
+      if (!textarea || textarea.disabled) return;
+      if (activeElement === textarea) return;
+      
+      // If focus is on another input/textarea, allow it
+      if (activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.getAttribute('contenteditable') === 'true' ||
+        activeElement.isContentEditable
+      )) {
+        return;
+      }
+      
+      // Refocus textarea
+      textarea.focus();
+    }, 200);
+    
+    return () => {
+      document.removeEventListener('focusin', handleFocusChange);
+      document.removeEventListener('click', handleFocusChange);
+      clearInterval(intervalId);
+    };
+  }, []);
 
   // Register insert text handler
   useEffect(() => {
@@ -3135,15 +3607,17 @@ export default function Home() {
         return prev ? `${prev} ${text}` : text;
       });
       // Focus the textarea after inserting
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          // Move cursor to end
-          const length = textareaRef.current.value.length;
-          textareaRef.current.setSelectionRange(length, length);
-          autoResizeTextarea();
-        }
-      }, 0);
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            // Move cursor to end
+            const length = textareaRef.current.value.length;
+            textareaRef.current.setSelectionRange(length, length);
+            autoResizeTextarea();
+          }
+        }, 0);
+      });
     });
   }, [setInsertTextHandler]);
 
@@ -3210,7 +3684,16 @@ export default function Home() {
       setInput("");
       setAttachedPDFs([]);
       setIsLoading(true);
-      setIsProcessing(true);
+
+      // Delay processing indicator to allow user message to fade in first (150ms to match animation)
+      setTimeout(() => {
+        setIsProcessing(true);
+      }, 150);
+
+      // Immediately focus the textarea so user can continue typing
+      shouldFocusRef.current = true;
+      setTimeout(() => forceFocusTextarea(), 0);
+      setTimeout(() => forceFocusTextarea(), 100);
 
       try {
         // Prepare conversation history (include images from assistant messages)
@@ -3452,6 +3935,17 @@ export default function Home() {
                       prev.map((msg: Message) =>
                         msg.id === streamAssistantMessageId
                           ? { ...msg, formattedSearch: parsed }
+                          : msg
+                      )
+                    );
+                  }
+                } else if (parsed.type === "file_list") {
+                  console.log("Received file list:", parsed.fileList);
+                  if (streamChatId) {
+                    updateChatMessages(streamChatId, (prev: Message[]) =>
+                      prev.map((msg: Message) =>
+                        msg.id === streamAssistantMessageId
+                          ? { ...msg, fileList: parsed.fileList }
                           : msg
                       )
                     );
@@ -3861,13 +4355,11 @@ export default function Home() {
                       : ""
                   }`}
                   style={message.role === "assistant" ? {
-                    animation: 'fadeInAssistant 0.8s ease-out forwards',
-                    willChange: 'opacity',
+                    opacity: 1,
                     maxWidth: hasTable ? '100%' : 'min(92%, 70ch)', // Full width for tables, optimal reading width otherwise
                   } : {
-                    animation: 'fadeIn 0.3s ease-in-out',
+                    animation: 'fadeIn 0.15s ease-out',
                     animationFillMode: 'backwards',
-                    animationDelay: `${index * 0.05}s`,
                     maxWidth: 'min(92.625%, 80.275ch)', // Extended width for better readability
                   }}
                 >
@@ -3879,7 +4371,15 @@ export default function Home() {
                       content={message.content}
                     />
                   )}
-                  
+
+                  {/* File List section - only for assistant messages */}
+                  {message.role === "assistant" && message.fileList && (
+                    <FileListDisplay
+                      fileList={message.fileList}
+                      handleFileOpen={handleFileOpen}
+                    />
+                  )}
+
                   {/* Images section - only for assistant messages (fallback if no formatted search) */}
                   {message.role === "assistant" && !message.formattedSearch && message.images && message.images.length > 0 && (
                     <div className="mb-4 flex flex-wrap gap-2">
@@ -3977,97 +4477,10 @@ export default function Home() {
                               }
                             }
                             
-                            // Separate text and tool parts
-                            const textParts = mergedParts.filter(p => p.type === 'text');
-                            const toolParts = mergedParts.filter(p => p.type === 'tool');
-                            
-                            // Extract tables from text parts that come before tool parts
-                            // Tables are markdown tables (lines starting with |)
-                            const textWithoutTables: typeof textParts = [];
-                            const extractedTables: Array<{ content: string; originalTextIdx: number }> = [];
-                            
-                            textParts.forEach((textPart, idx) => {
-                              const lines = textPart.content.split('\n');
-                              const textLines: string[] = [];
-                              let currentTable: string[] = [];
-                              let inTable = false;
-                              let tableHeading: string | null = null;
-                              
-                              lines.forEach((line, lineIdx) => {
-                                const trimmed = line.trim();
-                                const isTableLine = trimmed.startsWith('|') && trimmed.includes('|');
-                                const isTableHeader = trimmed.match(/^\|[\s\-\|:]+\|$/); // Separator row like |---|---|
-                                const isHeading = trimmed.startsWith('###') || trimmed.startsWith('##');
-                                
-                                if (isTableLine || isTableHeader) {
-                                  if (!inTable) {
-                                    inTable = true;
-                                    currentTable = [];
-                                    // Check if previous line was a heading (like "### Contents")
-                                    if (lineIdx > 0 && textLines.length > 0) {
-                                      const prevLine = textLines[textLines.length - 1].trim();
-                                      if (prevLine.startsWith('###') || prevLine.startsWith('##')) {
-                                        tableHeading = textLines.pop() || null;
-                                      }
-                                    }
-                                  }
-                                  currentTable.push(line);
-                                } else {
-                                  if (inTable) {
-                                    // End of table - save it with heading if present
-                                    if (currentTable.length > 0) {
-                                      const tableContent = tableHeading 
-                                        ? `${tableHeading}\n\n${currentTable.join('\n')}`
-                                        : currentTable.join('\n');
-                                      extractedTables.push({
-                                        content: tableContent,
-                                        originalTextIdx: idx
-                                      });
-                                    }
-                                    currentTable = [];
-                                    tableHeading = null;
-                                    inTable = false;
-                                  }
-                                  textLines.push(line);
-                                }
-                              });
-                              
-                              // Handle table at end of content
-                              if (inTable && currentTable.length > 0) {
-                                const tableContent = tableHeading 
-                                  ? `${tableHeading}\n\n${currentTable.join('\n')}`
-                                  : currentTable.join('\n');
-                                extractedTables.push({
-                                  content: tableContent,
-                                  originalTextIdx: idx
-                                });
-                              }
-                              
-                              // Create text part without tables
-                              const textWithoutTable = textLines.join('\n').trim();
-                              if (textWithoutTable) {
-                                textWithoutTables.push({
-                                  ...textPart,
-                                  content: textWithoutTable
-                                });
-                              } else if (textLines.length > 0) {
-                                // Keep even if empty after trimming (preserve structure)
-                                textWithoutTables.push({
-                                  ...textPart,
-                                  content: textLines.join('\n')
-                                });
-                              }
-                            });
-                            
-                            // Reorder: text without tables first, then tool parts, then extracted tables
-                            const reorderedParts: Array<typeof message.contentParts[0] | { type: 'extracted-table'; content: string }> = [
-                              ...textWithoutTables,
-                              ...toolParts,
-                              ...extractedTables.map(t => ({ type: 'extracted-table' as const, content: t.content }))
-                            ];
-                            
-                            return reorderedParts;
-                          })().map((part, partIdx, reorderedParts) => {
+                            // Keep original order - don't extract tables separately
+                            // This prevents UI jumping as content streams in
+                            return mergedParts;
+                          })().map((part, partIdx, allParts) => {
                             if (part.type === 'text') {
                               return (
                                 <div
@@ -4098,8 +4511,8 @@ export default function Home() {
                                 </div>
                               );
                             } else if (part.type === 'tool') {
-                              // Count how many tools have appeared before this one in the reordered array
-                              const toolIndex = reorderedParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
+                              // Count how many tools have appeared before this one
+                              const toolIndex = allParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
                               return (
                                 <ToolExecutionStep
                                   key={`tool-${partIdx}`}
@@ -4109,17 +4522,6 @@ export default function Home() {
                                   status={part.status}
                                   index={toolIndex}
                                 />
-                              );
-                            } else if ('type' in part && part.type === 'extracted-table') {
-                              // Render extracted table after tool execution steps
-                              return (
-                                <div key={`extracted-table-${partIdx}`} className="my-4">
-                                  {formatMessageContent(
-                                    part.content,
-                                    openFile,
-                                    handleFileOpen
-                                  )}
-                                </div>
                               );
                             }
                             return null;
@@ -4357,7 +4759,8 @@ export default function Home() {
           
           <div className="relative">
             <Textarea
-              ref={textareaRef}
+              ref={textareaCallbackRef}
+              autoFocus
               placeholder="Type your message..."
               className="min-h-[60px] max-h-[200px] resize-none pl-4 pr-20 text-lg text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
               style={{
@@ -4375,7 +4778,13 @@ export default function Home() {
                 autoResizeTextarea();
               }}
               onKeyDown={handleKeyDown}
-              disabled={isLoading || !authLoaded || !userId}
+              disabled={!authLoaded || !userId}
+              onFocus={(e) => {
+                // Ensure focus is maintained
+                if (document.activeElement !== e.target) {
+                  (e.target as HTMLTextAreaElement).focus();
+                }
+              }}
             />
             <div className="absolute top-1/2 -translate-y-1/2 right-3 flex items-center gap-2">
               {/* Browser feature disabled */}
@@ -4388,7 +4797,6 @@ export default function Home() {
               >
                 <Globe className="h-4 w-4" />
               </Button> */}
-              <CommandsButton className="h-8 w-8 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-accent transition-all duration-200" />
               <PDFUploadIcon
                 onPDFsChange={setAttachedPDFs}
                 existingPDFs={attachedPDFs}
@@ -4604,13 +5012,11 @@ export default function Home() {
                           : ""
                       }`}
                       style={message.role === "assistant" ? {
-                        animation: 'fadeInAssistant 0.8s ease-out forwards',
-                        willChange: 'opacity',
+                        opacity: 1,
                         maxWidth: hasTable ? '100%' : 'min(92%, 70ch)', // Full width for tables, optimal reading width otherwise
                       } : {
-                        animation: 'fadeIn 0.3s ease-in-out',
+                        animation: 'fadeIn 0.15s ease-out',
                         animationFillMode: 'backwards',
-                        animationDelay: `${index * 0.05}s`,
                         maxWidth: 'min(92.625%, 80.275ch)', // Extended width for better readability
                       }}
                     >
@@ -4622,7 +5028,15 @@ export default function Home() {
                           content={message.content}
                         />
                       )}
-                      
+
+                      {/* File List section - only for assistant messages */}
+                      {message.role === "assistant" && message.fileList && (
+                        <FileListDisplay
+                          fileList={message.fileList}
+                          handleFileOpen={handleFileOpen}
+                        />
+                      )}
+
                       {/* Images section - only for assistant messages (fallback if no formatted search) */}
                       {message.role === "assistant" && !message.formattedSearch && message.images && message.images.length > 0 && (
                         <div className="mb-4 flex flex-wrap gap-2">
@@ -4720,97 +5134,10 @@ export default function Home() {
                                   }
                                 }
                                 
-                                // Separate text and tool parts
-                                const textParts = mergedParts.filter(p => p.type === 'text');
-                                const toolParts = mergedParts.filter(p => p.type === 'tool');
-                                
-                                // Extract tables from text parts that come before tool parts
-                                // Tables are markdown tables (lines starting with |)
-                                const textWithoutTables: typeof textParts = [];
-                                const extractedTables: Array<{ content: string; originalTextIdx: number }> = [];
-                                
-                                textParts.forEach((textPart, idx) => {
-                                  const lines = textPart.content.split('\n');
-                                  const textLines: string[] = [];
-                                  let currentTable: string[] = [];
-                                  let inTable = false;
-                                  let tableHeading: string | null = null;
-                                  
-                                  lines.forEach((line, lineIdx) => {
-                                    const trimmed = line.trim();
-                                    const isTableLine = trimmed.startsWith('|') && trimmed.includes('|');
-                                    const isTableHeader = trimmed.match(/^\|[\s\-:|]+\|$/); // Separator row like |---|---|
-                                    const isHeading = trimmed.startsWith('###') || trimmed.startsWith('##');
-                                    
-                                    if (isTableLine || isTableHeader) {
-                                      if (!inTable) {
-                                        inTable = true;
-                                        currentTable = [];
-                                        // Check if previous line was a heading (like "### Contents")
-                                        if (lineIdx > 0 && textLines.length > 0) {
-                                          const prevLine = textLines[textLines.length - 1].trim();
-                                          if (prevLine.startsWith('###') || prevLine.startsWith('##')) {
-                                            tableHeading = textLines.pop() || null;
-                                          }
-                                        }
-                                      }
-                                      currentTable.push(line);
-                                    } else {
-                                      if (inTable) {
-                                        // End of table - save it with heading if present
-                                        if (currentTable.length > 0) {
-                                          const tableContent = tableHeading 
-                                            ? `${tableHeading}\n\n${currentTable.join('\n')}`
-                                            : currentTable.join('\n');
-                                          extractedTables.push({
-                                            content: tableContent,
-                                            originalTextIdx: idx
-                                          });
-                                        }
-                                        currentTable = [];
-                                        tableHeading = null;
-                                        inTable = false;
-                                      }
-                                      textLines.push(line);
-                                    }
-                                  });
-                                  
-                                  // Handle table at end of content
-                                  if (inTable && currentTable.length > 0) {
-                                    const tableContent = tableHeading 
-                                      ? `${tableHeading}\n\n${currentTable.join('\n')}`
-                                      : currentTable.join('\n');
-                                    extractedTables.push({
-                                      content: tableContent,
-                                      originalTextIdx: idx
-                                    });
-                                  }
-                                  
-                                  // Create text part without tables
-                                  const textWithoutTable = textLines.join('\n').trim();
-                                  if (textWithoutTable) {
-                                    textWithoutTables.push({
-                                      ...textPart,
-                                      content: textWithoutTable
-                                    });
-                                  } else if (textLines.length > 0) {
-                                    // Keep even if empty after trimming (preserve structure)
-                                    textWithoutTables.push({
-                                      ...textPart,
-                                      content: textLines.join('\n')
-                                    });
-                                  }
-                                });
-                                
-                                // Reorder: text without tables first, then tool parts, then extracted tables
-                                const reorderedParts: Array<typeof message.contentParts[0] | { type: 'extracted-table'; content: string }> = [
-                                  ...textWithoutTables,
-                                  ...toolParts,
-                                  ...extractedTables.map(t => ({ type: 'extracted-table' as const, content: t.content }))
-                                ];
-                                
-                                return reorderedParts;
-                              })().map((part, partIdx, reorderedParts) => {
+                                // Keep original order - don't extract tables separately
+                                // This prevents UI jumping as content streams in
+                                return mergedParts;
+                              })().map((part, partIdx, allParts) => {
                                 if (part.type === 'text') {
                                   return (
                                     <div
@@ -4841,8 +5168,8 @@ export default function Home() {
                                     </div>
                                   );
                                 } else if (part.type === 'tool') {
-                                  // Count how many tools have appeared before this one in the reordered array
-                                  const toolIndex = reorderedParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
+                                  // Count how many tools have appeared before this one
+                                  const toolIndex = allParts.slice(0, partIdx + 1).filter(p => p.type === 'tool').length;
                                   return (
                                     <ToolExecutionStep
                                       key={`tool-${partIdx}`}
@@ -4852,17 +5179,6 @@ export default function Home() {
                                       status={part.status}
                                       index={toolIndex}
                                     />
-                                  );
-                                } else if ('type' in part && part.type === 'extracted-table') {
-                                  // Render extracted table after tool execution steps
-                                  return (
-                                    <div key={`extracted-table-${partIdx}`} className="my-4">
-                                      {formatMessageContent(
-                                        part.content,
-                                        openFile,
-                                        handleFileOpen
-                                      )}
-                                    </div>
                                   );
                                 }
                                 return null;
@@ -5097,7 +5413,8 @@ export default function Home() {
 
                 <div className="relative">
                   <Textarea
-                    ref={textareaRef}
+                    ref={textareaCallbackRef}
+                    autoFocus
                     placeholder="Type your message..."
                     className="min-h-[60px] max-h-[200px] resize-none pl-4 pr-20 text-lg text-yellow-100 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                     style={{
@@ -5115,10 +5432,15 @@ export default function Home() {
                       autoResizeTextarea();
                     }}
                     onKeyDown={handleKeyDown}
-                    disabled={isLoading || !authLoaded || !userId}
+                    disabled={!authLoaded || !userId}
+                    onFocus={(e) => {
+                      // Ensure focus is maintained
+                      if (document.activeElement !== e.target) {
+                        (e.target as HTMLTextAreaElement).focus();
+                      }
+                    }}
                   />
                   <div className="absolute top-1/2 -translate-y-1/2 right-3 flex items-center gap-2">
-                    <CommandsButton className="h-8 w-8 bg-background/80 backdrop-blur-sm border border-border/50 hover:bg-accent transition-all duration-200" />
                     <PDFUploadIcon
                       onPDFsChange={setAttachedPDFs}
                       existingPDFs={attachedPDFs}

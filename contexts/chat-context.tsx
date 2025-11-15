@@ -148,6 +148,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
     setChats((prev) => [newChat, ...prev]);
     setActiveChatId(newChat.id);
+    // Dispatch event to notify that a new chat was created
+    // This allows components to react immediately
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('newChatCreated'));
+    }
     return newChat.id;
   }, []);
 
