@@ -5,6 +5,7 @@ import { SidebarNav } from "./sidebar-nav";
 import { useSidebar } from "@/components/ui/sidebar";
 import { AgentStatusFooter } from "@/components/local-env/agent-status-footer";
 import { LocalEnvToggle } from "@/components/local-env/local-env-toggle";
+import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { cn } from "@/lib/utils";
 
 // LLM Assistant logo SVG component
@@ -55,7 +56,12 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="flex-1 min-h-0 overflow-hidden invisible-scrollbar flex flex-col">
-        <SidebarNav />
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <SidebarNav />
+        </div>
+        <div className="shrink-0 border-t border-sidebar-border/50">
+          <LocalEnvConnector isCollapsed={isCollapsed} />
+        </div>
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border/50">
         <LocalEnvToggle />
