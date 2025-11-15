@@ -193,6 +193,15 @@
     display: none; /* Chrome, Safari, Opera */
   }
 
+  /* Safari-specific fixes */
+  @supports (-webkit-appearance: none) {
+    /* Fix for Safari fixed positioning and z-index issues */
+    [style*="z-index"] {
+      -webkit-transform: translateZ(0);
+      transform: translateZ(0);
+    }
+  }
+
   /* Mobile Safari input box padding fix */
   @supports (padding: max(0px)) {
     @media screen and (max-width: 768px) {
