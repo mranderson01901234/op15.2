@@ -2525,21 +2525,58 @@ export default function Home() {
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
   };
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (immediate = false) => {
+    const attemptScroll = (attempt = 0) => {
+      const container = messagesContainerRef.current;
+      const endElement = messagesEndRef.current;
+      
+      if (!container || !endElement) {
+        if (attempt < 10) {
+          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        }
+        return;
+      }
+      
+      // Wait for container to have dimensions
+      if (container.scrollHeight === 0 || container.clientHeight === 0) {
+        if (attempt < 20) {
+          requestAnimationFrame(() => attemptScroll(attempt + 1));
+        }
+        return;
+      }
+      
+      // Scroll to bottom
+      if (immediate) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        endElement.scrollIntoView({ behavior: "smooth" });
+      }
+    };
+    
+    attemptScroll(0);
   };
 
-  // Auto-scroll when user sends a message (only when not loading/processing)
+  // Auto-scroll to bottom on initial page load
   useEffect(() => {
-    if (!isLoading && !isProcessing && messages.length > 0) {
-      // Only scroll to bottom if we're not in the middle of streaming
-      // Check if the last message is from user (meaning they just sent it)
+    if (messages.length > 0 && !isLoading && !isProcessing) {
+      // Small delay to ensure DOM is ready
+      const timeoutId = setTimeout(() => {
+        scrollToBottom(true); // Immediate scroll on load
+      }, 100);
+      return () => clearTimeout(timeoutId);
+    }
+  }, []); // Only run once on mount
+
+  // Auto-scroll when user sends a message - scroll immediately when user message is added
+  useEffect(() => {
+    if (messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
+      // Scroll immediately when user message is added (before loading starts)
       if (lastMessage && lastMessage.role === "user") {
         scrollToBottom();
       }
     }
-  }, [messages.length, isLoading, isProcessing]);
+  }, [messages.length]); // Only depend on messages.length, not loading state
 
   // Track if we've already scrolled to user message to prevent repeated scrolling
   const hasScrolledToUserMessageRef = useRef(false);
