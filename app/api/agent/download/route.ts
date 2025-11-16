@@ -129,13 +129,17 @@ export async function GET(req: NextRequest) {
           serverUrl,
           binaryPath,
         });
-        // AppImage has .AppImage extension, shell script has .sh
-        filename = installerPath.endsWith('.AppImage') 
-          ? 'OP15-Agent-Installer.AppImage'
-          : 'OP15-Agent-Installer.sh';
-        contentType = installerPath.endsWith('.AppImage')
-          ? 'application/x-executable'
-          : 'application/x-sh';
+        // Desktop entry launcher (.desktop), AppImage (.AppImage), or shell script (.sh)
+        if (installerPath.endsWith('.desktop')) {
+          filename = 'OP15-Agent-Installer.desktop';
+          contentType = 'application/x-desktop';
+        } else if (installerPath.endsWith('.AppImage')) {
+          filename = 'OP15-Agent-Installer.AppImage';
+          contentType = 'application/x-executable';
+        } else {
+          filename = 'OP15-Agent-Installer.sh';
+          contentType = 'application/x-sh';
+        }
       } catch (error) {
         console.error('Linux installer build failed:', error);
         return NextResponse.json(
