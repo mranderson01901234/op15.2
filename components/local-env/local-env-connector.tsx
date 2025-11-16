@@ -27,8 +27,10 @@ export function LocalEnvConnector({ isCollapsed = false }: LocalEnvConnectorProp
       {/* Workspace Root Selector - Always visible */}
       <WorkspaceSelector />
       
-      {/* Agent Permissions Panel - Shows when agent is connected */}
-      <AgentPermissionsPanel />
+      {/* Agent Permissions Panel - Reserve space to prevent layout shift */}
+      <div className="min-h-[180px]">
+        <AgentPermissionsPanel />
+      </div>
       
       {/* Agent Auto-Installer - Single source of truth for install/connection UI */}
       <AgentAutoInstaller />
