@@ -358,9 +358,9 @@ show_progress "📋 Writing configuration..."
 # Write config.json
 cat > "$CONFIG_FILE" << EOF
 {
-  "userId": "${config.userId}",
-  "sharedSecret": "${config.sharedSecret}",
-  "serverUrl": "${config.serverUrl}",
+  "userId": "$USER_ID",
+  "sharedSecret": "$SHARED_SECRET",
+  "serverUrl": "$SERVER_URL",
   "httpPort": 4001
 }
 EOF
@@ -379,8 +379,8 @@ Type=simple
 ExecStart=$INSTALL_DIR/op15-agent
 Restart=always
 RestartSec=10
-Environment="SERVER_URL=${config.serverUrl}"
-Environment="USER_ID=${config.userId}"
+Environment="SERVER_URL=$SERVER_URL"
+Environment="USER_ID=$USER_ID"
 
 [Install]
 WantedBy=default.target
