@@ -101,8 +101,11 @@ export async function GET(req: NextRequest) {
       installerScript = generateUnixInstaller(serverUrl, userId, sharedSecret, agentDir, binaryName, platform);
       
       // Embed binary in installer script
+      // The script template ends with "__BINARY_DATA_STARTS_HERE__" marker
+      // We need to append a newline and then the binary
       const scriptBuffer = Buffer.from(installerScript);
-      const installer = Buffer.concat([scriptBuffer, binary]);
+      const newlineBuffer = Buffer.from('\n');
+      const installer = Buffer.concat([scriptBuffer, newlineBuffer, binary]);
       
       const response = new NextResponse(installer, {
         headers: {
@@ -190,7 +193,8 @@ function generateUnixInstaller(
 # This installer sets up the op15 agent as a system service
 # Binary data is embedded at the end of this script
 
-set -e
+# Don't exit on error - we want to show error messages
+set +e
 
 echo "🚀 op15 Local Agent Installer"
 echo "================================"
@@ -212,8 +216,11 @@ echo "📦 Installing agent..."
 BINARY_MARKER="__BINARY_DATA_STARTS_HERE__"
 BINARY_PATH="$AGENT_DIR/$BINARY_NAME"
 
+EXTRACTION_SUCCESS=0
+
 # Method 1: Use Python to extract directly (fastest and most reliable)
 if command -v python3 >/dev/null 2>&1; then
+  echo "🔍 Attempting binary extraction with Python..."
   python3 -c "
 import sys
 try:
@@ -222,23 +229,28 @@ try:
     marker = b'$BINARY_MARKER\\n'
     pos = data.find(marker)
     if pos == -1:
+        print('Marker not found', file=sys.stderr)
         sys.exit(1)
     start_pos = pos + len(marker)
     with open(sys.argv[2], 'wb') as out:
         out.write(data[start_pos:])
+    print(f'Extracted {len(data) - start_pos} bytes', file=sys.stderr)
 except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
-" "$0" "$BINARY_PATH" 2>/dev/null
+" "$0" "$BINARY_PATH" 2>&1
   if [ $? -eq 0 ] && [ -s "$BINARY_PATH" ]; then
     echo "✅ Binary extracted using Python"
+    EXTRACTION_SUCCESS=1
   else
-    # Clear failed extraction
+    echo "⚠️  Python extraction failed, trying fallback method..."
     rm -f "$BINARY_PATH"
   fi
 fi
 
 # Method 2: Fallback - use tail (much faster than dd bs=1)
-if [ ! -f "$BINARY_PATH" ] || [ ! -s "$BINARY_PATH" ]; then
+if [ $EXTRACTION_SUCCESS -eq 0 ]; then
+  echo "🔍 Attempting binary extraction with tail..."
   MARKER_POS=""
   
   # Try Python to find position
@@ -258,19 +270,39 @@ if [ ! -f "$BINARY_PATH" ] || [ ! -s "$BINARY_PATH" ]; then
   fi
   
   if [ -z "$MARKER_POS" ] || [ "$MARKER_POS" -le 0 ]; then
-    echo "❌ Error: Binary marker not found in installer"
+    echo "❌ Error: Binary marker '$BINARY_MARKER' not found in installer"
+    echo "   Installer size: $(wc -c < "$0") bytes"
+    echo "   Checking for marker..."
+    grep -n "$BINARY_MARKER" "$0" || echo "   Marker not found in script"
     exit 1
   fi
   
+  echo "   Found marker at byte position: $MARKER_POS"
+  
   # Extract binary using tail (much faster than dd bs=1)
   # tail -c +N outputs from byte N to end (1-indexed, so +1)
-  tail -c +$((MARKER_POS + 1)) "$0" > "$BINARY_PATH" 2>/dev/null
+  tail -c +$((MARKER_POS + 1)) "$0" > "$BINARY_PATH" 2>&1
+  if [ $? -eq 0 ] && [ -s "$BINARY_PATH" ]; then
+    echo "✅ Binary extracted using tail"
+    EXTRACTION_SUCCESS=1
+  else
+    echo "❌ Tail extraction failed"
+    rm -f "$BINARY_PATH"
+  fi
 fi
 
 # Verify binary was extracted and has reasonable size (> 1MB)
-BINARY_SIZE=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null || echo 0)
-if [ ! -s "$BINARY_PATH" ] || [ "$BINARY_SIZE" -lt 1000000 ]; then
-  echo "❌ Error: Failed to extract binary (size: $BINARY_SIZE bytes)"
+if [ $EXTRACTION_SUCCESS -eq 1 ]; then
+  BINARY_SIZE=$(stat -c%s "$BINARY_PATH" 2>/dev/null || stat -f%z "$BINARY_PATH" 2>/dev/null || echo 0)
+  if [ ! -s "$BINARY_PATH" ] || [ "$BINARY_SIZE" -lt 1000000 ]; then
+    echo "❌ Error: Binary extraction failed or file too small"
+    echo "   Extracted size: $BINARY_SIZE bytes (expected > 1MB)"
+    echo "   File exists: $([ -f "$BINARY_PATH" ] && echo 'yes' || echo 'no')"
+    exit 1
+  fi
+  echo "✅ Binary verified (size: $BINARY_SIZE bytes)"
+else
+  echo "❌ Error: All extraction methods failed"
   exit 1
 fi
 
