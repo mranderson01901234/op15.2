@@ -89,7 +89,8 @@ export function AgentPermissionsPanel() {
   useEffect(() => {
     if (user) {
       checkStatus();
-      const interval = setInterval(checkStatus, 5000);
+      // Reduce polling frequency to prevent constant updates and flashing
+      const interval = setInterval(checkStatus, 10000); // Check every 10 seconds instead of 5
       return () => clearInterval(interval);
     }
   }, [user]);

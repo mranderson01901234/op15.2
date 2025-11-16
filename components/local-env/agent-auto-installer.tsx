@@ -67,9 +67,10 @@ export function AgentAutoInstaller() {
       checkAgentStatus();
       
       // Set up polling to check agent status periodically
+      // Reduced frequency to prevent constant UI updates
       const pollInterval = setInterval(() => {
         checkAgentStatus();
-      }, 5000); // Check every 5 seconds
+      }, 10000); // Check every 10 seconds instead of 5
       
       return () => clearInterval(pollInterval);
     }
