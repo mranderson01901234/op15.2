@@ -120,7 +120,7 @@ export function InstallAgentModal({
         instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically\n\nYou may see a Windows security prompt - click "Yes" to allow the installation.`;
       } else {
         if (filename.endsWith('.AppImage')) {
-          instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. The agent will install and start automatically\n\nThat's it! No terminal commands needed.`;
+          instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click "${filename}" to run\n5. The agent will install and start automatically\n\nAlternative: Open Terminal and run:\n  cd ~/Downloads && chmod +x "${filename}" && ./"${filename}"`;
         } else {
           instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click the file to run\n5. The agent will install and start automatically\n\nAlternative: Open Terminal and run:\n  cd ~/Downloads && ./${filename}`;
         }
