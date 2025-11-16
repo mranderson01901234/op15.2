@@ -140,6 +140,21 @@ export function AgentAutoInstaller() {
             <CheckCircle className="h-3 w-3" />
             <span>{getStatusDisplay(connectionStatus).text}</span>
           </div>
+          {connectionStatus === "http-only" && (
+            <div className="p-2 border border-yellow-500/30 rounded-lg bg-yellow-500/10">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-3 w-3 text-yellow-500 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+                    WebSocket Not Connected
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Server-side operations require WebSocket. Browser features work via HTTP, but file operations from the server need WebSocket connection.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <button
             onClick={handleReinstall}
             disabled={isInstalling}

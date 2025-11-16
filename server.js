@@ -57,10 +57,18 @@ app.prepare().then(() => {
       
       if (pathname === '/api/bridge') {
         // Handle agent WebSocket connections
+        const userId = url.searchParams.get('userId');
+        const connectionType = url.searchParams.get('type') || 'agent';
         console.log('WebSocket upgrade request for agent', { 
           url: request.url,
           pathname,
           origin: request.headers.origin,
+          userId,
+          connectionType,
+          host: request.headers.host,
+          // Railway-specific headers
+          'x-forwarded-for': request.headers['x-forwarded-for'],
+          'x-forwarded-proto': request.headers['x-forwarded-proto'],
         });
         
         try {
@@ -68,7 +76,12 @@ app.prepare().then(() => {
             wss.emit('connection', ws, request);
           });
         } catch (error) {
-          console.error('Error handling agent WebSocket upgrade', { error: error.message });
+          console.error('Error handling agent WebSocket upgrade', { 
+            error: error.message,
+            stack: error.stack,
+            userId,
+            url: request.url,
+          });
           socket.destroy();
         }
       } else if (dev && pathname.startsWith('/_next/')) {
@@ -121,7 +134,16 @@ app.prepare().then(() => {
       return;
     }
 
-    console.log(`✅ Local agent connected successfully`, { userId });
+    console.log(`✅ Local agent connected successfully`, { 
+      userId,
+      url: req.url,
+      origin: req.headers.origin,
+      // Railway-specific diagnostics
+      'x-forwarded-for': req.headers['x-forwarded-for'],
+      'x-forwarded-proto': req.headers['x-forwarded-proto'],
+      host: req.headers.host,
+      serverUrl: process.env.NEXT_PUBLIC_APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN || 'not-set',
+    });
 
     // Store agent connection
     agents.set(userId, ws);
@@ -247,7 +269,23 @@ app.prepare().then(() => {
         reason: reason.toString(), 
         wasConnected: agents.has(userId),
         readyState: ws.readyState,
-        stackTrace: stackTrace?.split('\n').slice(0, 5).join('\n')
+        // Common WebSocket close codes:
+        // 1000 = Normal closure
+        // 1001 = Going away
+        // 1006 = Abnormal closure (no close frame received)
+        // 1008 = Policy violation
+        // 1011 = Internal error
+        closeCodeMeaning: {
+          1000: 'Normal closure',
+          1001: 'Going away',
+          1006: 'Abnormal closure (connection lost, Railway timeout?)',
+          1008: 'Policy violation',
+          1011: 'Internal error',
+        }[code] || 'Unknown',
+        stackTrace: stackTrace?.split('\n').slice(0, 5).join('\n'),
+        // Railway-specific: Check if this might be a timeout
+        isRailwayTimeout: code === 1006 && process.env.RAILWAY_PUBLIC_DOMAIN,
+        suggestion: code === 1006 ? 'Agent may need to reconnect. Check Railway logs for connection issues.' : null,
       });
       agents.delete(userId);
       // Clean up pending requests
@@ -310,16 +348,29 @@ app.prepare().then(() => {
           // Agent exists but WebSocket not connected
           // This is OK - agent can still work via HTTP from browser
           // But server-side operations need WebSocket
+          const serverUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN || 'your-server-url';
+          const wsProtocol = serverUrl.startsWith('https') ? 'wss' : 'ws';
+          const wsHost = serverUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          const wsUrl = `${wsProtocol}://${wsHost}/api/bridge`;
+          
           throw new Error(
-            `Agent WebSocket not connected for user ${userId}. ` +
-            `The agent is running (HTTP API available on port ${metadata.httpPort}), ` +
-            `but WebSocket connection is required for server-side operations. ` +
-            `Please ensure the agent is connected via WebSocket.`
+            `No agent connection available for user ${userId}. ` +
+            `The agent HTTP API is running (port ${metadata.httpPort}), but WebSocket connection to the server is required for server-side operations. ` +
+            `\n\n` +
+            `In Railway production, the agent must connect via WebSocket to: ${wsUrl}?userId=${userId}&type=agent` +
+            `\n\n` +
+            `Troubleshooting:` +
+            `\n1. Check that your agent is configured with the correct server URL: ${serverUrl}` +
+            `\n2. Verify the agent is using WSS (not WS) for production: ${wsUrl}` +
+            `\n3. Check Railway logs for WebSocket connection errors` +
+            `\n4. Ensure Railway allows WebSocket connections (they should work by default)` +
+            `\n5. Restart your local agent to reconnect`
           );
         }
         throw new Error(
           `No agent connection available for user ${userId}. ` +
-          `Please ensure your local agent is running and connected.`
+          `Please ensure your local agent is running and connected. ` +
+          `The agent should connect via WebSocket to: ${process.env.NEXT_PUBLIC_APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN || 'your-server-url'}/api/bridge?userId=${userId}&type=agent`
         );
       }
 
