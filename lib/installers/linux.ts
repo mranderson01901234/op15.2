@@ -19,23 +19,19 @@ export interface LinuxInstallerConfig {
 }
 
 /**
- * Build Linux installer (Desktop entry launcher for true double-click)
- * Creates a .desktop file that launches the AppImage installer
+ * Build Linux installer (AppImage for true double-click)
+ * Returns AppImage directly - users make it executable via GUI, then double-click
  */
 export async function buildLinuxInstaller(
   config: LinuxInstallerConfig
 ): Promise<string> {
-  // Build AppImage first
-  let appImagePath: string;
+  // Build AppImage - serve it directly
   try {
-    appImagePath = await buildLinuxAppImage(config);
+    return await buildLinuxAppImage(config);
   } catch (error) {
     console.warn('⚠️  AppImage build failed, falling back to shell script installer:', error instanceof Error ? error.message : String(error));
     return await buildLinuxShellInstaller(config);
   }
-
-  // Create desktop entry launcher that makes AppImage executable and runs it
-  return await buildDesktopEntryLauncher(config, appImagePath);
 }
 
 /**
