@@ -97,8 +97,8 @@ export function InstallAgentModal({
       } else if (platform === 'darwin') {
         filename = 'OP15-Agent-Installer.sh'; // macOS deferred, but use same format
       } else {
-        // Linux: Launcher script (.run) for true double-click, fallback to .sh
-        filename = 'OP15-Agent-Installer.run'; // Will be .sh if build fails
+        // Linux: Desktop entry (.desktop) for true double-click, fallback to .sh
+        filename = 'OP15-Agent-Installer.desktop'; // Will be .sh if build fails
       }
 
       // Create download link and trigger download
@@ -119,8 +119,8 @@ export function InstallAgentModal({
       if (platform === 'win32') {
         instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically\n\nYou may see a Windows security prompt - click "Yes" to allow the installation.`;
       } else {
-        if (filename.endsWith('.run')) {
-          instructions = `✅ Installer downloaded!\n\nIMPORTANT: Do NOT double-click from browser!\n\nTo complete installation:\n1. Close this browser download window\n2. Open your file manager (Files/Nautilus/Dolphin)\n3. Navigate to your Downloads folder\n4. Double-click "${filename}"\n5. If prompted, click "Run" or "Execute"\n6. The agent will install automatically\n\nThat's it! No terminal commands needed.`;
+        if (filename.endsWith('.desktop')) {
+          instructions = `✅ Installer downloaded!\n\nIMPORTANT: Do NOT double-click from browser!\n\nTo complete installation:\n1. Close this browser download window\n2. Open your file manager (Files/Nautilus/Dolphin)\n3. Navigate to your Downloads folder\n4. Double-click "${filename}"\n5. If prompted "Untrusted application launcher", click "Trust and Launch" or "Mark as Trusted"\n6. The agent will install automatically\n\nThat's it! No terminal commands needed.`;
         } else if (filename.endsWith('.AppImage')) {
           instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click "${filename}" to run\n5. The agent will install and start automatically`;
         } else {
