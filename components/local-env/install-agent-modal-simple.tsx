@@ -81,7 +81,10 @@ export function InstallAgentModal({
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Download failed' }));
-        throw new Error(errorData.error || `Download failed: ${response.status}`);
+        const errorMessage = errorData.error || `Download failed: ${response.status}`;
+        const errorDetails = errorData.details ? `\n\nDetails: ${errorData.details}` : '';
+        const errorHint = errorData.hint ? `\n\nHint: ${errorData.hint}` : '';
+        throw new Error(`${errorMessage}${errorDetails}${errorHint}`);
       }
 
       // Get the installer file as blob
