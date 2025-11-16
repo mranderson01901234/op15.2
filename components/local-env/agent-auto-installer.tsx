@@ -14,20 +14,25 @@ export function AgentAutoInstaller() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("none");
   const [error, setError] = useState<string | null>(null);
   const [platform, setPlatform] = useState<string>("");
-  const [checkingStatus, setCheckingStatus] = useState(true);
   const [showInstallModal, setShowInstallModal] = useState(false);
 
   const checkAgentStatus = useCallback(async () => {
     if (!user) return;
     
-    setCheckingStatus(true);
     try {
       // Use client-side connection check (can reach localhost from browser)
       const { getConnectionStatusClient } = await import('@/lib/infrastructure/connection-status-client');
       const connectionInfo = await getConnectionStatusClient(user.id);
       
       const newStatus: ConnectionStatus = connectionInfo.status || "none";
-      setConnectionStatus(newStatus);
+      
+      // Only update state if status actually changed to prevent unnecessary re-renders
+      setConnectionStatus(prevStatus => {
+        if (prevStatus === newStatus) {
+          return prevStatus; // No change, prevent re-render
+        }
+        return newStatus;
+      });
       
       // Log diagnostics if not connected
       if (newStatus === "none") {
@@ -42,9 +47,13 @@ export function AgentAutoInstaller() {
       console.error('Failed to check agent status:', err);
       // Check localStorage as fallback
       const agentInstalled = localStorage.getItem("op15-agent-installed");
-      setConnectionStatus(agentInstalled === "true" || agentInstalled === "downloaded" ? "none" : "none");
-    } finally {
-      setCheckingStatus(false);
+      const fallbackStatus: ConnectionStatus = agentInstalled === "true" || agentInstalled === "downloaded" ? "none" : "none";
+      setConnectionStatus(prevStatus => {
+        if (prevStatus === fallbackStatus) {
+          return prevStatus; // No change, prevent re-render
+        }
+        return fallbackStatus;
+      });
     }
   }, [user]);
 
@@ -125,10 +134,7 @@ export function AgentAutoInstaller() {
 
         {/* Reserve fixed height to prevent layout shift */}
         <div className="min-h-[120px]">
-      {checkingStatus ? (
-        // Hide checking status UI to prevent visual noise - status updates happen silently
-        null
-      ) : connectionStatus === "http-only" || connectionStatus === "full" ? (
+      {connectionStatus === "http-only" || connectionStatus === "full" ? (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 py-1">
             <CheckCircle className="h-3 w-3" />
