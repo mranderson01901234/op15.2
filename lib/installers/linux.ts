@@ -440,3 +440,38 @@ Terminal=false
   return outputFile;
 }
 
+/**
+ * Build desktop entry launcher for AppImage
+ * Creates a .desktop file that can be double-clicked without terminal
+ */
+async function buildDesktopEntryLauncher(
+  config: LinuxInstallerConfig,
+  appImagePath: string
+): Promise<string> {
+  const outputDir = path.join(process.cwd(), 'installers');
+  const outputFile = path.join(outputDir, 'OP15-Agent-Installer.desktop');
+
+  // Read AppImage to embed it
+  const appImageBuffer = readFileSync(appImagePath);
+  const appImageBase64 = appImageBuffer.toString('base64');
+
+  // Create desktop entry that extracts and runs AppImage
+  // Uses %k to get the desktop file path, extracts AppImage next to it, makes it executable, runs it
+  const desktopContent = `[Desktop Entry]
+Name=OP15 Agent Installer
+Comment=Install OP15 Local Agent
+Exec=bash -c 'cd "$(dirname "%k")" && INSTALLER_DIR="$HOME/Downloads" && APPIMAGE="$INSTALLER_DIR/OP15-Agent-Installer.AppImage" && if [ ! -f "$APPIMAGE" ] || [ ! -x "$APPIMAGE" ]; then echo "${appImageBase64}" | base64 -d > "$APPIMAGE" && chmod +x "$APPIMAGE"; fi && "$APPIMAGE"'
+Icon=application-x-executable
+Type=Application
+Categories=Utility;
+Terminal=false
+MimeType=application/x-desktop;
+`;
+
+  writeFileSync(outputFile, desktopContent);
+  chmodSync(outputFile, 0o755);
+
+  console.log(`✅ Desktop entry launcher built: ${outputFile}`);
+  return outputFile;
+}
+
