@@ -74,20 +74,19 @@ export function InstallAgentModal({
     setInstallStep("Starting automatic installation...");
 
     try {
-      // Check if browser bridge is available for automatic installation
-      const { LocalEnvBridge } = await import('@/lib/browser/local-env-bridge');
-      const bridge = LocalEnvBridge.getInstance();
+      // Check if agent is connected (via bridge manager)
+      const { getBridgeManager } = await import('@/lib/infrastructure/bridge-manager');
+      const bridgeManager = getBridgeManager();
       
-      if (!bridge || !bridge.isConnected) {
-        // Fallback to manual download if bridge not connected
-        setInstallStep("Browser bridge not connected. Downloading installer...");
-        await handleManualDownload();
-        return;
+      // Try to check if agent is connected (this will work from browser)
+      let isAgentConnected = false;
+      try {
+        isAgentConnected = await bridgeManager.isConnectedAsync(userId);
+      } catch (err) {
+        // If check fails, assume not connected
+        console.log('Agent connection check failed, will try automatic installation anyway');
       }
 
-      // AUTOMATIC INSTALLATION via browser bridge
-      setInstallStep("Downloading installer...");
-      
       // Get download URL
       const downloadUrl = `/api/agent/download?platform=${platform}`;
       
@@ -106,40 +105,48 @@ export function InstallAgentModal({
         installCommand = `curl -L -o "${downloadPath}" "${window.location.origin}${downloadUrl}" && chmod +x "${downloadPath}" && "${downloadPath}"`;
       }
 
-      setInstallStep("Installing agent automatically...\nThis may take a minute...");
+      // Try automatic installation if agent is connected
+      if (isAgentConnected) {
+        setInstallStep("Installing agent automatically...\nThis may take a minute...");
 
-      // Execute installation via browser bridge
-      // The bridge will execute the command on the user's local machine
-      const { getBridgeManager } = await import('@/lib/infrastructure/bridge-manager');
-      const bridgeManager = getBridgeManager();
-      
-      const result = await bridgeManager.requestBrowserOperation(
-        userId,
-        'exec.run',
-        {
-          command: installCommand,
-          timeoutMs: 300000, // 5 minutes timeout
+        try {
+          // Execute installation via bridge manager
+          const result = await bridgeManager.requestBrowserOperation(
+            userId,
+            'exec.run',
+            {
+              command: installCommand,
+              timeoutMs: 300000, // 5 minutes timeout
+            }
+          ) as { exitCode: number; stdout: string; stderr: string };
+
+          if (result.exitCode !== 0) {
+            throw new Error(`Installation failed: ${result.stderr || result.stdout}`);
+          }
+
+          setInstallStep("✅ Installation complete!\n\nWaiting for agent to connect...");
+          setIsComplete(true);
+          
+          // Mark as installed
+          localStorage.setItem("op15-agent-installed", "installed");
+          return;
+        } catch (autoError) {
+          console.warn("Automatic installation failed, falling back to manual:", autoError);
+          // Fall through to manual download
         }
-      ) as { exitCode: number; stdout: string; stderr: string };
-
-      if (result.exitCode !== 0) {
-        throw new Error(`Installation failed: ${result.stderr || result.stdout}`);
       }
 
-      setInstallStep("✅ Installation complete!\n\nWaiting for agent to connect...");
-      setIsComplete(true);
-      
-      // Mark as installed
-      localStorage.setItem("op15-agent-installed", "installed");
+      // Fallback to manual download
+      setInstallStep("Downloading installer...");
+      await handleManualDownload();
 
     } catch (error) {
-      console.error("Auto-install error:", error);
+      console.error("Install error:", error);
       
-      // If automatic installation fails, fall back to manual download
-      if (error instanceof Error && error.message.includes('not connected')) {
-        setInstallStep("Browser bridge not available. Downloading installer for manual installation...");
+      // If error, fall back to manual download
+      try {
         await handleManualDownload();
-      } else {
+      } catch (manualError) {
         setError(error instanceof Error ? error.message : "Installation failed");
         setIsInstalling(false);
       }
