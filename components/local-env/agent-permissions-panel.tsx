@@ -22,6 +22,7 @@ export function AgentPermissionsPanel() {
   const { user } = useUser();
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("none");
+  const [agentHttpPort, setAgentHttpPort] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -30,17 +31,13 @@ export function AgentPermissionsPanel() {
     if (!user) return;
     
     try {
-      // First check if agent is connected via status API
-      const statusResponse = await fetch(`/api/users/${user.id}/agent-status`);
-      if (!statusResponse.ok) {
-        setStatus(null);
-        setConnectionStatus("none");
-        return;
-      }
+      // Use client-side connection check (can reach localhost from browser)
+      const { getConnectionStatusClient } = await import('@/lib/infrastructure/connection-status-client');
+      const connectionInfo = await getConnectionStatusClient(user.id);
       
-      const connectionInfo = await statusResponse.json();
       const newStatus: ConnectionStatus = connectionInfo.status || "none";
       setConnectionStatus(newStatus);
+      setAgentHttpPort(connectionInfo.httpPort);
       
       // Only show panel if status is not "none"
       if (newStatus === "none") {
@@ -48,22 +45,30 @@ export function AgentPermissionsPanel() {
         return;
       }
       
-      // If HTTP API is available, get detailed status
+      // If HTTP API is available, get detailed status directly from agent
       if (connectionInfo.httpHealth === "healthy" && connectionInfo.httpPort) {
         try {
-          const response = await fetch(`/api/agent/permissions`);
+          const response = await fetch(`http://127.0.0.1:${connectionInfo.httpPort}/status`);
           if (response.ok) {
             const agentStatus = await response.json();
-            setStatus(agentStatus);
+            setStatus({
+              connected: true,
+              userId: user.id,
+              hasPermissions: agentStatus.hasPermissions || false,
+              mode: agentStatus.mode || null,
+              allowedDirectories: agentStatus.allowedDirectories || [],
+              allowedOperations: agentStatus.allowedOperations || [],
+              isShuttingDown: false,
+              httpApiAvailable: true,
+            });
             return;
           }
         } catch (err) {
-          // Fall through to use connection status
+          // Fall through to use connection info metadata
         }
       }
       
-      // Fallback: use connection status (may not have permissions info)
-      // At this point, newStatus is guaranteed to be "http-only" or "full" (not "none")
+      // Fallback: use connection info metadata
       setStatus({
         connected: true,
         userId: user.id,
@@ -90,19 +95,17 @@ export function AgentPermissionsPanel() {
   }, [user]);
 
   const approvePermissions = async (mode: 'safe' | 'balanced' | 'unrestricted') => {
-    if (!user || !status) return;
+    if (!user || !status || !agentHttpPort) return;
     
     setLoading(true);
     setError(null);
     setSuccess(null);
     
     try {
-      // Get home directory from agent status API
-      const metadataResponse = await fetch(`/api/users/${user.id}/agent-status`);
-      if (!metadataResponse.ok) throw new Error('Failed to get agent info');
-      
-      const metadata = await metadataResponse.json();
-      const homeDir = metadata.userHomeDirectory || '/home/user';
+      // Get home directory from connection info
+      const { getConnectionStatusClient } = await import('@/lib/infrastructure/connection-status-client');
+      const connectionInfo = await getConnectionStatusClient(user.id);
+      const homeDir = connectionInfo.metadata?.homeDirectory || '/home/user';
       
       // Determine allowed directories based on mode
       let allowedDirectories: string[] = [];
@@ -128,8 +131,8 @@ export function AgentPermissionsPanel() {
         allowedOperations = ['read', 'write', 'delete', 'exec'];
       }
       
-      // Use proxy API (avoids CORS)
-      const response = await fetch(`/api/agent/permissions`, {
+      // Call agent directly from browser (can reach localhost)
+      const response = await fetch(`http://127.0.0.1:${agentHttpPort}/plan/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -21,51 +21,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { path, depth } = requestSchema.parse(body);
 
-    // Get user context with browser bridge connection status
-    let browserBridgeConnected = false;
-    try {
-      const bridgeManager = getBridgeManager();
-      browserBridgeConnected = bridgeManager.isConnected(authenticatedUserId);
-    } catch (error) {
-      logger.warn('Failed to check bridge connection status', { error: error instanceof Error ? error.message : String(error) });
-      // Continue without bridge connection - not a fatal error
-    }
+    logger.info("Filesystem list request", { path, depth, userId: authenticatedUserId });
 
-    const context: UserContext = {
-      userId: authenticatedUserId,
-      workspaceId: undefined,
-      browserBridgeConnected,
-    };
-
-    logger.info("Filesystem list request", { path, depth, userId: context.userId });
-
-    // Check if agent is connected
+    // Route to user's local agent (HTTP-first, falls back to WebSocket)
+    // requestBrowserOperation will handle connection checking and provide proper error messages
     const bridgeManager = getBridgeManager();
-    if (!browserBridgeConnected || !bridgeManager.isConnected(authenticatedUserId)) {
-      logger.error('Agent not connected - refusing to execute on shared server', undefined, {
-        userId: authenticatedUserId,
-        operation: 'fs.list',
-        path,
-      });
-
-      return NextResponse.json(
-        {
-          error: 'Local agent required',
-          message:
-            '⚠️ Local agent required but not connected.\n\n' +
-            'To list files, you must install and run the local agent:\n' +
-            '1. Click "Enable Local Environment" in the sidebar\n' +
-            '2. Download and install the local agent\n' +
-            '3. Run the agent with your user ID\n' +
-            '4. Wait for connection confirmation\n\n' +
-            'The local agent runs on YOUR machine to access YOUR files.\n' +
-            'This ensures complete isolation between users.',
-        },
-        { status: 403 }
-      );
-    }
-
-    // Route to user's local agent via WebSocket
+    
     try {
       const result = await bridgeManager.requestBrowserOperation(
         authenticatedUserId,
@@ -89,10 +50,26 @@ export async function POST(req: NextRequest) {
         path,
       });
 
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Provide helpful error messages based on error type
+      if (errorMessage.includes('No agent connection') || errorMessage.includes('Agent not connected')) {
+        return NextResponse.json(
+          {
+            error: 'Local agent required',
+            message:
+              '⚠️ Local agent required to list files.\n\n' +
+              'Please install and run the local agent to access YOUR files.\n' +
+              'Click "Install Local Agent" in the sidebar to get started.',
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         {
           error: 'Agent operation failed',
-          message: `❌ Failed to list files: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check that your local agent is running and the path exists.`,
+          message: `❌ Failed to list files: ${errorMessage}\n\nPlease check that your local agent is running and the path exists.`,
         },
         { status: 500 }
       );

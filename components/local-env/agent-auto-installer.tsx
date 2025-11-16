@@ -22,40 +22,21 @@ export function AgentAutoInstaller() {
     
     setCheckingStatus(true);
     try {
-      // Check actual agent connection status using ConnectionStatus enum
-      const response = await fetch(`/api/users/${user.id}/agent-status`, {
-        cache: 'no-store',
-      });
+      // Use client-side connection check (can reach localhost from browser)
+      const { getConnectionStatusClient } = await import('@/lib/infrastructure/connection-status-client');
+      const connectionInfo = await getConnectionStatusClient(user.id);
       
-      if (response.ok) {
-        const status = await response.json();
-        // Use the new ConnectionStatus enum
-        const newStatus: ConnectionStatus = status.status || "none";
-        setConnectionStatus(newStatus);
-        
-        // Log diagnostics if not connected
-        if (newStatus === "none") {
-          console.log('Agent status check:', {
-            status: newStatus,
-            httpHealth: status.httpHealth,
-            httpPort: status.httpPort,
-            metadata: status.metadata,
-          });
-        }
-      } else {
-        // Fallback: Check workspace API for metadata
-        const workspaceResponse = await fetch(`/api/users/${user.id}/workspace`, {
-          cache: 'no-store',
+      const newStatus: ConnectionStatus = connectionInfo.status || "none";
+      setConnectionStatus(newStatus);
+      
+      // Log diagnostics if not connected
+      if (newStatus === "none") {
+        console.log('Agent status check:', {
+          status: newStatus,
+          httpHealth: connectionInfo.httpHealth,
+          httpPort: connectionInfo.httpPort,
+          metadata: connectionInfo.metadata,
         });
-        if (workspaceResponse.ok) {
-          const config = await workspaceResponse.json();
-          // If we have metadata but no connection, status is still "none"
-          setConnectionStatus("none");
-        } else {
-          // Check localStorage as fallback
-          const agentInstalled = localStorage.getItem("op15-agent-installed");
-          setConnectionStatus(agentInstalled === "true" || agentInstalled === "downloaded" ? "none" : "none");
-        }
       }
     } catch (err) {
       console.error('Failed to check agent status:', err);
@@ -82,30 +63,15 @@ export function AgentAutoInstaller() {
         setPlatform("linux");
       }
 
-      // On mount, check if agent is already running via direct /health check
-      const checkRunningAgent = async () => {
-        try {
-          // Try default port 4001
-          const healthResponse = await fetch('http://127.0.0.1:4001/health', {
-            signal: AbortSignal.timeout(200), // Fast check
-          });
-          
-          if (healthResponse.ok) {
-            // Agent is running - check if registered
-            await checkAgentStatus();
-          } else {
-            // Agent not responding - show install button
-            setConnectionStatus("none");
-            setCheckingStatus(false);
-          }
-        } catch {
-          // Agent not running - show install button
-          setConnectionStatus("none");
-          setCheckingStatus(false);
-        }
-      };
+      // On mount, check if agent is already running
+      checkAgentStatus();
       
-      checkRunningAgent();
+      // Set up polling to check agent status periodically
+      const pollInterval = setInterval(() => {
+        checkAgentStatus();
+      }, 5000); // Check every 5 seconds
+      
+      return () => clearInterval(pollInterval);
     }
   }, [user, checkAgentStatus]);
 

@@ -17,8 +17,9 @@ import { useWorkspace } from "@/contexts/workspace-context";
 import { useChat, type Message as ChatMessage } from "@/contexts/chat-context";
 import { useChatInput } from "@/contexts/chat-input-context";
 import { CommandsButton } from "@/components/layout/commands-button";
-import { SignedIn, useAuth } from "@clerk/nextjs";
+import { SignedIn, useAuth, useClerk } from "@clerk/nextjs";
 import { TopHeader } from "@/components/layout/top-header";
+import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
 import {
   Dialog,
   DialogContent,
@@ -320,12 +321,14 @@ function NestedDirectoryTable({
   directories,
   parentKeyId,
   openFile,
-  handleFileOpen
+  handleFileOpen,
+  fileLoading
 }: {
   directories: string[][];
   parentKeyId: string;
   openFile?: (path: string, content: string) => void;
   handleFileOpen?: (path: string) => void;
+  fileLoading?: string | null;
 }) {
   const [expandedDirs, setExpandedDirs] = useState<Map<number, boolean>>(new Map());
   const [dirContents, setDirContents] = useState<Map<number, { directories: string[][]; files: string[][]; loading: boolean }>>(new Map());
@@ -491,6 +494,7 @@ function NestedDirectoryTable({
                               parentKeyId={`${parentKeyId}-nested-${dirIdx}`}
                               openFile={openFile}
                               handleFileOpen={handleFileOpen}
+                              fileLoading={fileLoading}
                             />
                           )}
                           {contents.files.length > 0 && (
@@ -527,6 +531,7 @@ function NestedDirectoryTable({
                     console.error('Error reading file:', error);
                   }
                 })}
+                                      fileLoading={fileLoading}
                                     />
                                   ))}
                                 </tbody>
@@ -557,13 +562,15 @@ function ClickableFileRow({
   headers,
   rowIdx,
   keyId,
-  onFileClick
+  onFileClick,
+  fileLoading
 }: {
   row: string[];
   headers: string[];
   rowIdx: number;
   keyId: string;
   onFileClick: (path: string) => void;
+  fileLoading?: string | null;
 }) {
   // Extract path from file row (usually in second column, index 1)
   const getFilePath = (): string | null => {
@@ -580,9 +587,10 @@ function ClickableFileRow({
 
   const filePath = getFilePath();
   const isClickable = filePath !== null;
+  const isThisFileLoading = fileLoading !== null && fileLoading !== undefined && filePath === fileLoading;
 
   const handleClick = () => {
-    if (filePath && isClickable) {
+    if (filePath && isClickable && !isThisFileLoading) {
       onFileClick(filePath);
     }
   };
@@ -590,12 +598,19 @@ function ClickableFileRow({
   return (
     <tr
       key={`file-row-${rowIdx}`}
-      className={`border-b border-border/20 ${isClickable ? 'hover:bg-muted/30 transition-colors cursor-pointer' : ''}`}
-      onClick={isClickable ? handleClick : undefined}
+      className={`border-b border-border/20 ${isClickable && !isThisFileLoading ? 'hover:bg-muted/30 transition-colors cursor-pointer' : isThisFileLoading ? 'opacity-60' : ''}`}
+      onClick={isClickable && !isThisFileLoading ? handleClick : undefined}
     >
       {row.map((cell, cellIdx) => (
         <td key={`file-cell-${cellIdx}`} className="px-3 py-2 text-xs text-foreground/80">
-          {formatInlineContent(cell.trim())}
+          {isThisFileLoading && cellIdx === 0 ? (
+            <span className="flex items-center gap-2">
+              {formatInlineContent(cell.trim())}
+              <span className="text-[10px] text-muted-foreground">Loading...</span>
+            </span>
+          ) : (
+            formatInlineContent(cell.trim())
+          )}
         </td>
       ))}
     </tr>
@@ -608,13 +623,15 @@ function MarkdownTable({
   rows, 
   keyId,
   openFile,
-  handleFileOpen
+  handleFileOpen,
+  fileLoading
 }: { 
   headers: string[]; 
   rows: string[][]; 
   keyId: string;
   openFile?: (path: string, content: string) => void;
   handleFileOpen?: (path: string) => void;
+  fileLoading?: string | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Map<number, boolean>>(new Map());
@@ -801,6 +818,7 @@ function MarkdownTable({
                         parentKeyId={`${keyId}-parent-${rowIdx}`}
                         openFile={openFile}
                         handleFileOpen={handleFileOpen}
+                        fileLoading={fileLoading}
                       />
                     )}
                     {contents.files.length > 0 && (
@@ -837,6 +855,7 @@ function MarkdownTable({
                     console.error('Error reading file:', error);
                   }
                 })}
+                                fileLoading={fileLoading}
                               />
                             ))}
                           </tbody>
@@ -1191,7 +1210,7 @@ function ToolExecutionStep({
 }
 
 // Format message content with code blocks, headers, and better structure
-function formatMessageContent(content: string, openFile?: (path: string, content: string) => void, handleFileOpen?: (path: string) => void): React.ReactElement {
+function formatMessageContent(content: string, openFile?: (path: string, content: string) => void, handleFileOpen?: (path: string) => void, fileLoading?: string | null): React.ReactElement {
   const parts: React.ReactElement[] = [];
   let key = 0;
 
@@ -1472,6 +1491,7 @@ function formatMessageContent(content: string, openFile?: (path: string, content
                 keyId={`table-${key-1}`}
                 openFile={openFile}
                 handleFileOpen={handleFileOpen}
+                fileLoading={fileLoading}
               />
             );
           }
@@ -2327,10 +2347,57 @@ export default function Home() {
   const streamingStartHeightRef = useRef<number>(0);
   const hasScrolled200pxRef = useRef<boolean>(false);
   const { openFile, updateEditorContent, editorState, imageState, openImage, closeImage, videoState, openVideo, closeVideo, browserState, openBrowser, closeBrowser, activeMobilePanel, setActiveMobilePanel } = useWorkspace();
-  const { activeChatId, getActiveChat, createChat, updateChatMessages, isHydrated } = useChat();
+  const { activeChatId, getActiveChat, createChat, updateChatMessages, isHydrated, chats, deleteChat, setActiveChat } = useChat();
   const { setInsertTextHandler, setSendMessageHandler, sendMessage } = useChatInput();
   const { userId, isLoaded: authLoaded } = useAuth();
+  const { signOut } = useClerk();
   const isMobile = useIsMobile();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  
+  // Sign out handler (same as TopHeader)
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+
+    try {
+      // Clear all chats from state
+      const chatsToDelete = [...chats];
+      chatsToDelete.forEach((chat) => {
+        deleteChat(chat.id);
+      });
+      // Clear active chat
+      setActiveChat(null);
+      
+      // Clear localStorage
+      try {
+        localStorage.removeItem("op15-chats");
+        localStorage.removeItem("op15-active-chat-id");
+        // Clear all op15-related keys
+        localStorage.removeItem('op15-local-env-enabled');
+        localStorage.removeItem('op15-agent-installed');
+        localStorage.removeItem('localEnvSelectedDir');
+        localStorage.removeItem('localEnvUserId');
+        // Clear any other op15 keys
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('op15-') || key.startsWith('localEnv'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+      } catch (error) {
+        console.error("Failed to clear localStorage on sign out:", error);
+      }
+
+      // Sign out from Clerk
+      await signOut();
+    } catch (error) {
+      console.error("Error signing out:", error);
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
 
   // Helper function to determine error reason from error message
   const getFileErrorReason = (errorMessage: string, filePath: string): { reason: string; message: string } => {
@@ -2400,28 +2467,55 @@ export default function Home() {
   };
 
   // Helper function to handle file opening with error modal
+  const [fileLoading, setFileLoading] = useState<string | null>(null);
+  
   const handleFileOpen = async (path: string) => {
     if (!openFile) return;
     
+    setFileLoading(path);
+    
+    let timeoutId: NodeJS.Timeout | null = null;
+    
     try {
-      const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`);
+      // Add timeout to prevent hanging
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch(`/api/filesystem/read?path=${encodeURIComponent(path)}`, {
+        signal: controller.signal,
+      });
+      
+      if (timeoutId) clearTimeout(timeoutId);
+      
       if (response.ok) {
         const data = await response.json();
         if (data.error) {
           const errorInfo = getFileErrorReason(data.error, path);
           setFileError({ path, ...errorInfo });
+          setFileLoading(null);
           return;
         }
         openFile(path, data.content || '');
+        setFileLoading(null);
       } else {
         const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
         const errorInfo = getFileErrorReason(errorData.error || `HTTP ${response.status}`, path);
         setFileError({ path, ...errorInfo });
+        setFileLoading(null);
       }
     } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      const errorInfo = getFileErrorReason(errorMessage, path);
-      setFileError({ path, ...errorInfo });
+      
+      // Handle timeout specifically
+      if (error instanceof Error && error.name === 'AbortError') {
+        const errorInfo = getFileErrorReason('Request timeout - agent may not be connected', path);
+        setFileError({ path, ...errorInfo });
+      } else {
+        const errorInfo = getFileErrorReason(errorMessage, path);
+        setFileError({ path, ...errorInfo });
+      }
+      setFileLoading(null);
     }
   };
 
@@ -4190,10 +4284,13 @@ export default function Home() {
     touchStartRef.current = null;
   };
 
+  const isEditorOpen = editorState.isOpen;
+  const isRightPanelOpen = isEditorOpen || imageState.isOpen || videoState.isOpen || browserState.isOpen;
+
   return (
     <>
-      {/* Top Header - visible in both chat and editor views */}
-      <TopHeader />
+      {/* Top Header - visible when editor is NOT open */}
+      {!isRightPanelOpen && <TopHeader />}
       
       {/* Desktop Layout - hidden on mobile */}
       <div className="hidden md:block h-full">
@@ -4205,6 +4302,22 @@ export default function Home() {
               minHeight: '100dvh', // Use dynamic viewport height for mobile Safari
             }}
           >
+            {/* Header with Commands, User Button, and Sign Out - only show when editor is open */}
+            {isEditorOpen && !isMobile && (
+              <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-border bg-sidebar/30">
+                <CommandsButton />
+                <UserButtonWithClear />
+                <SignedIn>
+                  <button
+                    onClick={handleSignOut}
+                    disabled={isSigningOut}
+                    className="px-2 py-1 text-xs font-medium text-foreground hover:text-foreground/80 transition-colors disabled:opacity-50"
+                  >
+                    {isSigningOut ? "Signing out..." : "Sign Out"}
+                  </button>
+                </SignedIn>
+              </div>
+            )}
         <style dangerouslySetInnerHTML={{
           __html: `
             @keyframes fadeIn {
@@ -4501,7 +4614,8 @@ export default function Home() {
                                       .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                       .trim(),
                                     openFile,
-                                    handleFileOpen
+                                    handleFileOpen,
+                                    fileLoading
                                   ) : null}
                                 </div>
                               );
@@ -4561,7 +4675,8 @@ export default function Home() {
                                   .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                   .trim(),
                             openFile,
-                            handleFileOpen
+                            handleFileOpen,
+                            fileLoading
                           ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
                             <ProcessingIndicator />
                           ) : null}
@@ -5154,7 +5269,8 @@ export default function Home() {
                                           .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                           .trim(),
                                         openFile,
-                                        handleFileOpen
+                                        handleFileOpen,
+                                        fileLoading
                                       ) : null}
                                     </div>
                                   );
@@ -5214,7 +5330,8 @@ export default function Home() {
                                       .replace(/Here's?\s+the\s+generated\s+image/i, '')
                                       .trim(),
                                 openFile,
-                                handleFileOpen
+                                handleFileOpen,
+                                fileLoading
                               ) : (hasToolCalls || isCurrentlyStreaming || isStreaming) && message.role === "assistant" ? (
                                 <ProcessingIndicator />
                               ) : null}

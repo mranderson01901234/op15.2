@@ -21,29 +21,10 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Check if agent is connected
+    // Route to user's local agent (HTTP-first, falls back to WebSocket)
+    // requestBrowserOperation will handle connection checking and provide proper error messages
     const bridgeManager = getBridgeManager();
-    const isAgentConnected = bridgeManager.isConnected(authenticatedUserId);
-
-    if (!isAgentConnected) {
-      logger.error('Agent not connected - refusing to execute on shared server', undefined, {
-        userId: authenticatedUserId,
-        operation: 'fs.read',
-        path,
-      });
-
-      return NextResponse.json(
-        {
-          error: 'Local agent required',
-          message:
-            '⚠️ Local agent required to read files.\n\n' +
-            'Please install and run the local agent to access YOUR files.',
-        },
-        { status: 403 }
-      );
-    }
-
-    // Route to user's local agent
+    
     try {
       const result = await bridgeManager.requestBrowserOperation(
         authenticatedUserId,
@@ -62,10 +43,26 @@ export async function GET(req: NextRequest) {
         error: error instanceof Error ? error.message : String(error),
       });
 
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Provide helpful error messages based on error type
+      if (errorMessage.includes('No agent connection') || errorMessage.includes('Agent not connected')) {
+        return NextResponse.json(
+          {
+            error: 'Local agent required',
+            message:
+              '⚠️ Local agent required to read files.\n\n' +
+              'Please install and run the local agent to access YOUR files.\n' +
+              'Click "Install Local Agent" in the sidebar to get started.',
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         {
           error: 'Agent operation failed',
-          message: `❌ Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          message: `❌ Failed to read file: ${errorMessage}`,
         },
         { status: 500 }
       );

@@ -32,11 +32,12 @@ export function InstallAgentModal({
 
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/users/${userId}/agent-status`);
-        const data = await response.json();
+        // Use client-side connection check (can reach localhost from browser)
+        const { getConnectionStatusClient } = await import('@/lib/infrastructure/connection-status-client');
+        const connectionInfo = await getConnectionStatusClient(userId);
 
         // Check if agent is connected (using new ConnectionStatus enum)
-        if (data.status === "http-only" || data.status === "full") {
+        if (connectionInfo.status === "http-only" || connectionInfo.status === "full") {
           setIsConnected(true);
           setInstallStep("✅ Agent connected successfully!");
           setIsInstalling(false);

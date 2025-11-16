@@ -17,8 +17,6 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { X, Save, CheckCircle2, XCircle, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { UserButtonWithClear } from "@/components/auth/user-button-with-clear";
-import { CommandsButton } from "@/components/layout/commands-button";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 // Custom theme matching matte black background
@@ -299,12 +297,6 @@ export function CodeMirrorEditor() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Commands Button (Cheat Sheet) */}
-          {!isMobile && <CommandsButton />}
-          
-          {/* User Button */}
-          {!isMobile && <UserButtonWithClear />}
-          
           {/* Close Button */}
           <button
             onClick={closeEditor}
