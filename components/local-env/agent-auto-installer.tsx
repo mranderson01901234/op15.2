@@ -125,10 +125,8 @@ export function AgentAutoInstaller() {
         {/* Reserve fixed height to prevent layout shift */}
         <div className="min-h-[120px]">
       {checkingStatus ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>Checking status...</span>
-        </div>
+        // Hide checking status UI to prevent visual noise - status updates happen silently
+        null
       ) : connectionStatus === "http-only" || connectionStatus === "full" ? (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 py-1">
