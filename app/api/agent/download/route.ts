@@ -48,10 +48,15 @@ export async function GET(req: NextRequest) {
     if (platform === 'win32') {
       binaryPath = path.join(process.cwd(), 'local-agent', 'dist', 'binaries', 'local-agent-win-x64.exe');
       if (!existsSync(binaryPath)) {
+        const isProduction = process.env.NODE_ENV === 'production';
         return NextResponse.json(
           { 
             error: 'Agent binary not available. Binaries must be built first.',
-            hint: 'Run: cd local-agent && pnpm build:binaries'
+            hint: isProduction 
+              ? 'Binaries should be built during deployment. Please check deployment logs or contact support.'
+              : 'Run: cd local-agent && pnpm build:binaries',
+            production: isProduction,
+            binaryPath: binaryPath
           },
           { status: 404 }
         );
@@ -82,10 +87,15 @@ export async function GET(req: NextRequest) {
     } else if (platform === 'linux') {
       binaryPath = path.join(process.cwd(), 'local-agent', 'dist', 'binaries', 'local-agent-linux-x64');
       if (!existsSync(binaryPath)) {
+        const isProduction = process.env.NODE_ENV === 'production';
         return NextResponse.json(
           { 
             error: 'Agent binary not available. Binaries must be built first.',
-            hint: 'Run: cd local-agent && pnpm build:binaries'
+            hint: isProduction 
+              ? 'Binaries should be built during deployment. Please check deployment logs or contact support.'
+              : 'Run: cd local-agent && pnpm build:binaries',
+            production: isProduction,
+            binaryPath: binaryPath
           },
           { status: 404 }
         );
