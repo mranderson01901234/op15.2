@@ -116,18 +116,24 @@ export async function buildWindowsInstaller(
     }
 
     if (!isccPath) {
-      throw new Error(
-        'Inno Setup compiler (ISCC.exe) not found.\n' +
-        (isWindows
-          ? 'Please install Inno Setup 6 from https://jrsoftware.org/isinfo.php'
-          : isLinux
-          ? 'For Linux: Install Wine and Inno Setup:\n' +
-            '  1. sudo apt-get install wine\n' +
-            '  2. wine is.exe (download from jrsoftware.org)\n' +
-            '  3. Set INNO_SETUP_PATH="$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"'
-          : 'Please install Inno Setup 6') +
-        '\nOr set INNO_SETUP_PATH environment variable.'
-      );
+      // In production, provide helpful error with alternative solutions
+      const isProduction = process.env.NODE_ENV === 'production';
+      const errorMsg = isProduction
+        ? 'Windows installer build is not available in production.\n' +
+          'Windows installers must be built locally or via CI/CD.\n' +
+          'Alternative: Use Linux installer or build Windows installer manually.'
+        : 'Inno Setup compiler (ISCC.exe) not found.\n' +
+          (isWindows
+            ? 'Please install Inno Setup 6 from https://jrsoftware.org/isinfo.php'
+            : isLinux
+            ? 'For Linux: Install Wine and Inno Setup:\n' +
+              '  1. sudo apt-get install wine\n' +
+              '  2. wine is.exe (download from jrsoftware.org)\n' +
+              '  3. Set INNO_SETUP_PATH="$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"'
+            : 'Please install Inno Setup 6') +
+          '\nOr set INNO_SETUP_PATH environment variable.';
+      
+      throw new Error(errorMsg);
     }
 
     // Build installer
