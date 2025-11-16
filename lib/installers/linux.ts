@@ -48,9 +48,44 @@ export async function buildLinuxInstaller(
 
 set -e
 
-echo "🚀 OP15 Agent Installer"
-echo "========================"
-echo ""
+# Detect if running from file manager (no TTY) and use GUI dialogs
+USE_GUI=false
+if [ ! -t 0 ]; then
+  USE_GUI=true
+  # Check for GUI dialog tools
+  if command -v zenity >/dev/null 2>&1; then
+    DIALOG_TOOL="zenity"
+  elif command -v kdialog >/dev/null 2>&1; then
+    DIALOG_TOOL="kdialog"
+  else
+    USE_GUI=false
+  fi
+fi
+
+# Show message function
+show_message() {
+  if [ "$USE_GUI" = true ] && [ -n "$DIALOG_TOOL" ]; then
+    if [ "$DIALOG_TOOL" = "zenity" ]; then
+      zenity --info --text="$1" --title="OP15 Agent Installer" 2>/dev/null || echo "$1"
+    elif [ "$DIALOG_TOOL" = "kdialog" ]; then
+      kdialog --msgbox "$1" --title "OP15 Agent Installer" 2>/dev/null || echo "$1"
+    fi
+  else
+    echo "$1"
+  fi
+}
+
+# Show progress function
+show_progress() {
+  if [ "$USE_GUI" = true ] && [ "$DIALOG_TOOL" = "zenity" ]; then
+    echo "$1" | zenity --progress --pulsate --text="$1" --title="OP15 Agent Installer" --auto-close 2>/dev/null &
+    PROGRESS_PID=$!
+  else
+    echo "$1"
+  fi
+}
+
+show_message "🚀 OP15 Agent Installer\\n\\nStarting installation..."
 
 # Installation directory
 INSTALL_DIR="$HOME/.local/share/op15-agent"
@@ -73,7 +108,14 @@ ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
 tail -n+$ARCHIVE_START "$0" > "$BINARY_PATH"
 chmod +x "$BINARY_PATH"
 
-echo "📦 Agent binary extracted"
+show_progress "📦 Extracting agent binary..."
+
+# Extract binary from this script
+ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
+tail -n+$ARCHIVE_START "$0" > "$BINARY_PATH"
+chmod +x "$BINARY_PATH"
+
+show_progress "📋 Writing configuration..."
 
 # Write config.json
 cat > "$CONFIG_FILE" << EOF
@@ -85,7 +127,7 @@ cat > "$CONFIG_FILE" << EOF
 }
 EOF
 
-echo "📋 Configuration written"
+show_progress "🔧 Creating system service..."
 
 # Create systemd user service
 mkdir -p "$HOME/.config/systemd/user"
@@ -106,21 +148,19 @@ Environment="USER_ID=${config.userId}"
 WantedBy=default.target
 EOF
 
-echo "🔧 Systemd service created"
+show_progress "🚀 Starting agent..."
 
 # Enable and start service
 systemctl --user daemon-reload
 systemctl --user enable op15-agent.service || true
 systemctl --user start op15-agent.service || true
 
-echo ""
-echo "✅ Installation complete!"
-echo ""
-echo "Agent directory: $INSTALL_DIR"
-echo "Service status: systemctl --user status op15-agent"
-echo ""
-echo "The agent is now running and will start automatically on login."
-echo ""
+# Close progress dialog if open
+if [ -n "$PROGRESS_PID" ]; then
+  kill $PROGRESS_PID 2>/dev/null || true
+fi
+
+show_message "✅ Installation Complete!\\n\\nThe OP15 agent is now installed and running.\\n\\nIt will start automatically when you log in.\\n\\nYou can close this window."
 
 # Exit before binary data
 exit 0

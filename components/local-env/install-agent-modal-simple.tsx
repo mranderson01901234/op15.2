@@ -115,7 +115,7 @@ export function InstallAgentModal({
       if (platform === 'win32') {
         instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically\n\nYou may see a Windows security prompt - click "Yes" to allow the installation.`;
       } else {
-        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. If prompted, select "Run" or "Execute"\n4. The agent will install and start automatically\n\nNote: If double-click doesn't work, right-click the file → Properties → Permissions → Check "Allow executing file as program"`;
+        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click the file to run\n5. The agent will install and start automatically\n\nAlternative: Open Terminal and run:\n  cd ~/Downloads && ./${filename}`;
       }
 
       setInstallStep(instructions);
