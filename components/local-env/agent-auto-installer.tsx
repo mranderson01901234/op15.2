@@ -122,6 +122,8 @@ export function AgentAutoInstaller() {
           </div>
         </div>
 
+        {/* Reserve fixed height to prevent layout shift */}
+        <div className="min-h-[120px]">
       {checkingStatus ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
           <Loader2 className="h-3 w-3 animate-spin" />
@@ -212,6 +214,7 @@ export function AgentAutoInstaller() {
           </div>
         </div>
       ) : null}
+        </div>
       </div>
     </>
   );
