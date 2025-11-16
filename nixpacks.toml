@@ -1,15 +1,18 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "wine"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = [
-  "npm install -g pnpm@10.20.0 && export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm install --frozen-lockfile"
+  "npm install -g pnpm@10.20.0 && export PATH=\"$PATH:$(npm config get prefix)/bin\" && export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 && pnpm install --frozen-lockfile --prod=false"
 ]
 
 [phases.build]
 cmds = [
-  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build",
-  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build:agent:binaries || echo 'Warning: Agent binary build failed - installers will not be available'"
+  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && export PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 && pnpm run build",
+  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build:agent:binaries || echo 'Warning: Agent binary build failed - installers will not be available'",
+  "rm -rf node_modules/.cache .next/cache local-agent/node_modules local-agent/.cache 2>/dev/null || true",
+  "find node_modules -name '*.map' -delete 2>/dev/null || true",
+  "find node_modules -name '*.ts' -not -path '*/node_modules/@types/*' -delete 2>/dev/null || true"
 ]
 
 [start]
