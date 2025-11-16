@@ -9,7 +9,9 @@ cmds = [
 [phases.build]
 cmds = [
   "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build",
-  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build:agent:binaries || echo 'Warning: Agent binary build failed - installers will not be available'"
+  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build:agent:binaries || echo 'Warning: Agent binary build failed - installers will not be available'",
+  "if [ -f /usr/bin/wine ]; then wine --version || echo 'Wine not functional'; else echo 'Wine not available'; fi",
+  "if [ -f /usr/bin/wine ] && [ ! -f \"$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe\" ]; then echo 'Installing Inno Setup in Wine...' && mkdir -p /tmp/inno-setup && cd /tmp/inno-setup && wget -q https://jrsoftware.org/download.php/is.exe -O inno-setup.exe && WINEDLLOVERRIDES=\"mscoree,mshtml=\" wine inno-setup.exe /SP- /SILENT /SUPPRESSMSGBOXES /LOG=/tmp/inno-setup-install.log || echo 'Inno Setup installation attempted'; else echo 'Inno Setup already installed or Wine not available'; fi"
 ]
 
 [start]
