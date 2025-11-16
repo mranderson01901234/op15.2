@@ -293,6 +293,7 @@ export async function buildLinuxAppImage(
   chmodSync(agentBinaryDest, 0o755);
 
   // Create AppRun script (installer logic)
+  // Note: Variables are substituted at build time in TypeScript
   const appRunScript = `#!/bin/bash
 set -e
 
@@ -301,6 +302,11 @@ INSTALL_DIR="$HOME/.local/share/op15-agent"
 CONFIG_FILE="$INSTALL_DIR/config.json"
 BINARY_PATH="$INSTALL_DIR/op15-agent"
 SERVICE_FILE="$HOME/.config/systemd/user/op15-agent.service"
+
+# Config values (injected at build time)
+USER_ID="${config.userId}"
+SHARED_SECRET="${config.sharedSecret}"
+SERVER_URL="${config.serverUrl}"
 
 # Detect GUI and use dialogs
 USE_GUI=false
