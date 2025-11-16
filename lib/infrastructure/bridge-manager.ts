@@ -112,27 +112,34 @@ export class BridgeManager {
 
   /**
    * Request operation from agent
-   * Prefers HTTP API if available, falls back to WebSocket
+   * Prefers HTTP API if available (browser-side only), falls back to WebSocket
+   * Note: HTTP API only works from browser/client-side. Server-side code must use WebSocket.
    */
   async requestBrowserOperation(
     userId: string,
     operation: string,
     args: Record<string, unknown> = {}
   ): Promise<unknown> {
-    // Try HTTP API first (more reliable)
-    const httpPort = this.getAgentHttpPort(userId);
-    if (httpPort) {
-      try {
-        const { AgentHttpClient } = await import('./agent-http-client');
-        const client = new AgentHttpClient(httpPort);
-        return await client.executeOperation(operation as any, args);
-      } catch (error) {
-        logger.warn('HTTP API request failed, falling back to WebSocket', {
-          userId,
-          operation,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        // Fall through to WebSocket
+    // HTTP API only works from browser/client-side (can reach user's localhost)
+    // Server-side code cannot reach user's localhost, so skip HTTP API in production
+    const isServerSide = typeof window === 'undefined';
+    
+    // Try HTTP API first (only from browser/client-side)
+    if (!isServerSide) {
+      const httpPort = this.getAgentHttpPort(userId);
+      if (httpPort) {
+        try {
+          const { AgentHttpClient } = await import('./agent-http-client');
+          const client = new AgentHttpClient(httpPort);
+          return await client.executeOperation(operation as any, args);
+        } catch (error) {
+          logger.warn('HTTP API request failed, falling back to WebSocket', {
+            userId,
+            operation,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // Fall through to WebSocket
+        }
       }
     }
 
