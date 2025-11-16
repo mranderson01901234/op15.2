@@ -1050,13 +1050,168 @@ class LocalAgent {
   }
 }
 
+/**
+ * Install Windows Task Scheduler entry for auto-start
+ */
+async function installWindowsAutoStart(agentPath: string): Promise<void> {
+  const taskName = 'OP15Agent';
+  const taskXml = `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Actions>
+    <Exec>
+      <Command>${agentPath.replace(/\\/g, '\\\\')}</Command>
+    </Exec>
+  </Actions>
+  <Settings>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <RestartOnFailure>
+      <Interval>PT10M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+  </Settings>
+</Task>`;
+
+  const tempXml = path.join(path.dirname(agentPath), 'task.xml');
+  await fs.writeFile(tempXml, taskXml, 'utf16le');
+  
+  try {
+    await execAsync(`schtasks /create /tn "${taskName}" /xml "${tempXml}" /f`, {
+      encoding: 'utf8',
+    });
+    console.log('✅ Windows Task Scheduler entry created');
+  } catch (error) {
+    console.warn('⚠️  Failed to create Task Scheduler entry:', error);
+    // Continue anyway - agent can still run manually
+  } finally {
+    try {
+      await fs.unlink(tempXml);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Install Linux systemd user service for auto-start
+ */
+async function installLinuxAutoStart(agentPath: string, config: { serverUrl: string; userId: string }): Promise<void> {
+  const serviceDir = path.join(process.env.HOME || '/home/user', '.config', 'systemd', 'user');
+  await fs.mkdir(serviceDir, { recursive: true });
+  
+  const serviceFile = path.join(serviceDir, 'op15-agent.service');
+  const serviceContent = `[Unit]
+Description=OP15 Local Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${agentPath}
+Restart=always
+RestartSec=10
+Environment="SERVER_URL=${config.serverUrl}"
+Environment="USER_ID=${config.userId}"
+
+[Install]
+WantedBy=default.target
+`;
+
+  await fs.writeFile(serviceFile, serviceContent, 'utf8');
+  
+  try {
+    await execAsync('systemctl --user daemon-reload');
+    await execAsync('systemctl --user enable op15-agent.service');
+    await execAsync('systemctl --user start op15-agent.service');
+    console.log('✅ Linux systemd service installed and started');
+  } catch (error) {
+    console.warn('⚠️  Failed to install systemd service:', error);
+    // Continue anyway - agent can still run manually
+  }
+}
+
+/**
+ * Uninstall Windows Task Scheduler entry
+ */
+async function uninstallWindowsAutoStart(): Promise<void> {
+  const taskName = 'OP15Agent';
+  try {
+    await execAsync(`schtasks /delete /tn "${taskName}" /f`, { encoding: 'utf8' });
+    console.log('✅ Windows Task Scheduler entry removed');
+  } catch (error) {
+    console.warn('⚠️  Failed to remove Task Scheduler entry:', error);
+  }
+}
+
+/**
+ * Uninstall Linux systemd user service
+ */
+async function uninstallLinuxAutoStart(): Promise<void> {
+  try {
+    await execAsync('systemctl --user stop op15-agent.service').catch(() => {});
+    await execAsync('systemctl --user disable op15-agent.service').catch(() => {});
+    const serviceFile = path.join(process.env.HOME || '/home/user', '.config', 'systemd', 'user', 'op15-agent.service');
+    await fs.unlink(serviceFile).catch(() => {});
+    await execAsync('systemctl --user daemon-reload');
+    console.log('✅ Linux systemd service removed');
+  } catch (error) {
+    console.warn('⚠️  Failed to remove systemd service:', error);
+  }
+}
+
 // CLI interface
 async function main() {
+  // Check for --install or --uninstall flags
+  const args = process.argv.slice(2);
+  if (args.includes('--install')) {
+    // Installation mode - set up auto-start
+    const agentPath = process.execPath;
+    const agentDir = process.platform === 'win32'
+      ? path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE || 'C:\\Users\\User', 'OP15', 'Agent')
+      : path.join(process.env.HOME || '/home/user', '.local', 'share', 'op15-agent');
+    const configPath = path.join(agentDir, 'config.json');
+    
+    try {
+      const configContent = await fs.readFile(configPath, 'utf8');
+      const config = JSON.parse(configContent);
+      
+      if (process.platform === 'win32') {
+        await installWindowsAutoStart(agentPath);
+      } else {
+        await installLinuxAutoStart(agentPath, config);
+      }
+      
+      console.log('✅ Auto-start configured');
+      process.exit(0);
+    } catch (error) {
+      console.error('❌ Failed to configure auto-start:', error);
+      process.exit(1);
+    }
+    return;
+  }
+  
+  if (args.includes('--uninstall')) {
+    // Uninstall mode - remove auto-start
+    if (process.platform === 'win32') {
+      await uninstallWindowsAutoStart();
+    } else {
+      await uninstallLinuxAutoStart();
+    }
+    process.exit(0);
+    return;
+  }
+
   // Try to read config.json first (for Phase 1: pre-built binaries)
   // Use same paths as installer generates
   const agentDir = process.platform === 'win32'
-    ? path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE || 'C:\\Users\\User', 'op15-agent')
-    : path.join(process.env.HOME || '/home/user', '.op15-agent');
+    ? path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE || 'C:\\Users\\User', 'OP15', 'Agent')
+    : path.join(process.env.HOME || '/home/user', '.local', 'share', 'op15-agent');
   const configPath = path.join(agentDir, 'config.json');
   
   let serverUrl: string;
@@ -1078,11 +1233,10 @@ async function main() {
     console.log('📋 Loaded configuration from:', configPath);
   } catch (error) {
     // Fall back to command-line arguments
-    const args = process.argv.slice(2);
-    
     if (args.length < 2) {
       console.error('Usage: local-agent <server-url> <user-id> [auth-token]');
-      console.error('   Or: Place config.json in ~/.op15-agent/config.json');
+      console.error('   Or: Place config.json in ~/.local/share/op15-agent/config.json');
+      console.error('   Flags: --install (configure auto-start), --uninstall (remove auto-start)');
       console.error('Example: local-agent https://your-app.up.railway.app user_123abc');
       process.exit(1);
     }

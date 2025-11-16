@@ -87,14 +87,14 @@ export function InstallAgentModal({
       // Get the installer file as blob
       const blob = await response.blob();
       
-      // Determine filename based on platform
+      // Determine filename based on platform (must match download endpoint)
       let filename: string;
       if (platform === 'win32') {
-        filename = 'op15-agent-installer.exe';
+        filename = 'OP15-Agent-Setup.exe';
       } else if (platform === 'darwin') {
-        filename = 'op15-agent-installer';
+        filename = 'OP15-Agent-Installer.sh'; // macOS deferred, but use same format
       } else {
-        filename = 'op15-agent-installer.run';
+        filename = 'OP15-Agent-Installer.sh';
       }
 
       // Create download link and trigger download
@@ -113,9 +113,9 @@ export function InstallAgentModal({
       // Show instructions based on platform
       let instructions: string;
       if (platform === 'win32') {
-        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open Downloads folder\n2. Double-click ${filename}\n3. Follow the installation prompts\n\nThe agent will start automatically after installation.`;
+        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically\n\nYou may see a Windows security prompt - click "Yes" to allow the installation.`;
       } else {
-        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open terminal\n2. Run: chmod +x ~/Downloads/${filename}\n3. Run: ~/Downloads/${filename}\n\nThe agent will start automatically after installation.`;
+        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. If prompted, select "Run" or "Execute"\n4. The agent will install and start automatically\n\nNote: If double-click doesn't work, right-click the file → Properties → Permissions → Check "Allow executing file as program"`;
       }
 
       setInstallStep(instructions);
