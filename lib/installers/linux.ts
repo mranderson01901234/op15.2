@@ -350,20 +350,20 @@ chmod +x "$BINARY_PATH"
 show_progress "📋 Writing configuration..."
 
 # Write config.json
-cat > "$CONFIG_FILE" << 'CONFIG_EOF'
+cat > "$CONFIG_FILE" << EOF
 {
   "userId": "${config.userId}",
   "sharedSecret": "${config.sharedSecret}",
   "serverUrl": "${config.serverUrl}",
   "httpPort": 4001
 }
-CONFIG_EOF
+EOF
 
 show_progress "🔧 Creating system service..."
 
 # Create systemd user service
 mkdir -p "$HOME/.config/systemd/user"
-cat > "$SERVICE_FILE" << 'SERVICE_EOF'
+cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=OP15 Local Agent
 After=network.target
@@ -378,7 +378,7 @@ Environment="USER_ID=${config.userId}"
 
 [Install]
 WantedBy=default.target
-SERVICE_EOF
+EOF
 
 show_progress "🚀 Starting agent..."
 
