@@ -109,8 +109,13 @@ export async function GET(req: NextRequest) {
           serverUrl,
           binaryPath,
         });
-        filename = 'OP15-Agent-Installer.sh';
-        contentType = 'application/x-sh';
+        // AppImage has .AppImage extension, shell script has .sh
+        filename = installerPath.endsWith('.AppImage') 
+          ? 'OP15-Agent-Installer.AppImage'
+          : 'OP15-Agent-Installer.sh';
+        contentType = installerPath.endsWith('.AppImage')
+          ? 'application/x-executable'
+          : 'application/x-sh';
       } catch (error) {
         console.error('Linux installer build failed:', error);
         return NextResponse.json(

@@ -19,10 +19,26 @@ export interface LinuxInstallerConfig {
 }
 
 /**
- * Build Linux self-extracting installer
- * Creates a shell script that extracts and runs the AppImage
+ * Build Linux installer (AppImage or shell script fallback)
+ * Prefers AppImage for true double-click, falls back to shell script
  */
 export async function buildLinuxInstaller(
+  config: LinuxInstallerConfig
+): Promise<string> {
+  // Try AppImage first (true double-click)
+  try {
+    return await buildLinuxAppImage(config);
+  } catch (error) {
+    console.warn('⚠️  AppImage build failed, falling back to shell script installer:', error instanceof Error ? error.message : String(error));
+    return await buildLinuxShellInstaller(config);
+  }
+}
+
+/**
+ * Build Linux self-extracting shell script installer (fallback)
+ * Creates a shell script that extracts and installs the agent
+ */
+async function buildLinuxShellInstaller(
   config: LinuxInstallerConfig
 ): Promise<string> {
   const outputDir = path.join(process.cwd(), 'installers');
@@ -178,14 +194,243 @@ __ARCHIVE_BELOW__
 }
 
 /**
- * Build AppImage (alternative approach - not used in current implementation)
- * This is kept for reference if we want to switch to AppImage format later
+ * Build Linux AppImage installer
+ * Creates a true double-click executable AppImage
  */
 export async function buildLinuxAppImage(
   config: LinuxInstallerConfig
 ): Promise<string> {
-  // This would require AppImageKit tools
-  // For now, we use self-extracting installer instead
-  throw new Error('AppImage build not implemented. Use buildLinuxInstaller instead.');
+  const outputDir = path.join(process.cwd(), 'installers');
+  const outputFile = path.join(outputDir, 'OP15-Agent-Installer.AppImage');
+  const appDir = path.join(outputDir, 'AppDir');
+
+  // Ensure output directory exists
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
+  }
+
+  // Check if binary exists
+  if (!existsSync(config.binaryPath)) {
+    throw new Error(`Agent binary not found: ${config.binaryPath}`);
+  }
+
+  // Check for appimagetool
+  let appimagetoolPath: string | null = null;
+  const possiblePaths = [
+    process.env.APPIMAGETOOL_PATH,
+    path.join(process.cwd(), 'tools', 'appimagetool-x86_64.AppImage'),
+    '/usr/local/bin/appimagetool',
+    '/usr/bin/appimagetool',
+  ].filter(Boolean) as string[];
+
+  for (const toolPath of possiblePaths) {
+    if (existsSync(toolPath)) {
+      appimagetoolPath = toolPath;
+      break;
+    }
+  }
+
+  // Try to find appimagetool in PATH
+  if (!appimagetoolPath) {
+    try {
+      const whichResult = execSync('which appimagetool', { encoding: 'utf8' }).trim();
+      if (whichResult) {
+        appimagetoolPath = whichResult;
+      }
+    } catch {
+      // Not in PATH
+    }
+  }
+
+  if (!appimagetoolPath) {
+    // Download appimagetool if not found
+    console.log('📥 Downloading appimagetool...');
+    const toolsDir = path.join(process.cwd(), 'tools');
+    if (!existsSync(toolsDir)) {
+      mkdirSync(toolsDir, { recursive: true });
+    }
+    
+    appimagetoolPath = path.join(toolsDir, 'appimagetool-x86_64.AppImage');
+    
+    if (!existsSync(appimagetoolPath)) {
+      try {
+        execSync(
+          `wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O "${appimagetoolPath}"`,
+          { stdio: 'inherit' }
+        );
+        chmodSync(appimagetoolPath, 0o755);
+        console.log('✅ appimagetool downloaded');
+      } catch (error) {
+        throw new Error(
+          `appimagetool not found and download failed. Please install appimagetool:\n` +
+          `  wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage\n` +
+          `  chmod +x appimagetool-x86_64.AppImage\n` +
+          `  sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool\n` +
+          `Or set APPIMAGETOOL_PATH environment variable.`
+        );
+      }
+    }
+  }
+
+  // Clean up old AppDir if exists
+  if (existsSync(appDir)) {
+    execSync(`rm -rf "${appDir}"`);
+  }
+  mkdirSync(appDir, { recursive: true });
+
+  // Create AppDir structure
+  const usrBinDir = path.join(appDir, 'usr', 'bin');
+  const usrShareAppsDir = path.join(appDir, 'usr', 'share', 'applications');
+  const usrShareIconsDir = path.join(appDir, 'usr', 'share', 'icons', 'hicolor', '256x256', 'apps');
+  
+  mkdirSync(usrBinDir, { recursive: true });
+  mkdirSync(usrShareAppsDir, { recursive: true });
+  mkdirSync(usrShareIconsDir, { recursive: true });
+
+  // Copy agent binary
+  const agentBinaryDest = path.join(usrBinDir, 'op15-agent');
+  execSync(`cp "${config.binaryPath}" "${agentBinaryDest}"`);
+  chmodSync(agentBinaryDest, 0o755);
+
+  // Create AppRun script (installer logic)
+  const appRunScript = `#!/bin/bash
+set -e
+
+# Installation directory
+INSTALL_DIR="$HOME/.local/share/op15-agent"
+CONFIG_FILE="$INSTALL_DIR/config.json"
+BINARY_PATH="$INSTALL_DIR/op15-agent"
+SERVICE_FILE="$HOME/.config/systemd/user/op15-agent.service"
+
+# Detect GUI and use dialogs
+USE_GUI=false
+if [ ! -t 0 ]; then
+  USE_GUI=true
+  if command -v zenity >/dev/null 2>&1; then
+    DIALOG_TOOL="zenity"
+  elif command -v kdialog >/dev/null 2>&1; then
+    DIALOG_TOOL="kdialog"
+  else
+    USE_GUI=false
+  fi
+fi
+
+show_message() {
+  if [ "$USE_GUI" = true ] && [ -n "$DIALOG_TOOL" ]; then
+    if [ "$DIALOG_TOOL" = "zenity" ]; then
+      zenity --info --text="$1" --title="OP15 Agent Installer" 2>/dev/null || echo "$1"
+    elif [ "$DIALOG_TOOL" = "kdialog" ]; then
+      kdialog --msgbox "$1" --title "OP15 Agent Installer" 2>/dev/null || echo "$1"
+    fi
+  else
+    echo "$1"
+  fi
+}
+
+show_progress() {
+  if [ "$USE_GUI" = true ] && [ "$DIALOG_TOOL" = "zenity" ]; then
+    echo "$1" | zenity --progress --pulsate --text="$1" --title="OP15 Agent Installer" --auto-close 2>/dev/null &
+    PROGRESS_PID=$!
+  else
+    echo "$1"
+  fi
+}
+
+show_message "🚀 OP15 Agent Installer\\n\\nStarting installation..."
+
+# Create installation directory
+mkdir -p "$INSTALL_DIR"
+
+show_progress "📦 Installing agent binary..."
+
+# Copy binary from AppImage
+cp "$APPDIR/usr/bin/op15-agent" "$BINARY_PATH"
+chmod +x "$BINARY_PATH"
+
+show_progress "📋 Writing configuration..."
+
+# Write config.json
+cat > "$CONFIG_FILE" << 'CONFIG_EOF'
+{
+  "userId": "${config.userId}",
+  "sharedSecret": "${config.sharedSecret}",
+  "serverUrl": "${config.serverUrl}",
+  "httpPort": 4001
+}
+CONFIG_EOF
+
+show_progress "🔧 Creating system service..."
+
+# Create systemd user service
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$SERVICE_FILE" << 'SERVICE_EOF'
+[Unit]
+Description=OP15 Local Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/op15-agent
+Restart=always
+RestartSec=10
+Environment="SERVER_URL=${config.serverUrl}"
+Environment="USER_ID=${config.userId}"
+
+[Install]
+WantedBy=default.target
+SERVICE_EOF
+
+show_progress "🚀 Starting agent..."
+
+# Enable and start service
+systemctl --user daemon-reload
+systemctl --user enable op15-agent.service || true
+systemctl --user start op15-agent.service || true
+
+# Close progress dialog if open
+if [ -n "$PROGRESS_PID" ]; then
+  kill $PROGRESS_PID 2>/dev/null || true
+fi
+
+show_message "✅ Installation Complete!\\n\\nThe OP15 agent is now installed and running.\\n\\nIt will start automatically when you log in.\\n\\nYou can close this window."
+
+exit 0
+`;
+
+  // Write AppRun
+  const appRunPath = path.join(appDir, 'AppRun');
+  writeFileSync(appRunPath, appRunScript);
+  chmodSync(appRunPath, 0o755);
+
+  // Create .desktop file
+  const desktopFile = `[Desktop Entry]
+Name=OP15 Agent Installer
+Comment=Install OP15 Local Agent
+Exec=op15-agent-installer
+Icon=op15-agent
+Type=Application
+Categories=Utility;
+Terminal=false
+`;
+  writeFileSync(path.join(usrShareAppsDir, 'op15-agent-installer.desktop'), desktopFile);
+
+  // Create AppImage
+  console.log('🔨 Building AppImage...');
+  execSync(`"${appimagetoolPath}" "${appDir}" "${outputFile}"`, {
+    stdio: 'inherit',
+    cwd: outputDir,
+  });
+
+  // Make AppImage executable
+  chmodSync(outputFile, 0o755);
+
+  // Clean up AppDir
+  execSync(`rm -rf "${appDir}"`);
+
+  console.log(`✅ AppImage built: ${outputFile}`);
+  const stats = require('fs').statSync(outputFile);
+  console.log(`  Size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+
+  return outputFile;
 }
 
