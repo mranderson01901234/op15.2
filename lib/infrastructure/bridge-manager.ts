@@ -67,21 +67,82 @@ export class BridgeManager {
 
   /**
    * Check if user has an active agent connection
+   * Returns true if EITHER WebSocket is connected OR HTTP API is available
+   * HTTP API works even if WebSocket closes (e.g., with 1006 error)
+   * 
+   * @deprecated Use getConnectionStatus() from connection-status.ts for more detailed status
    */
   isConnected(userId: string): boolean {
+    // Check both the bridge-manager connections AND the server.js agents Map
+    // server.js exposes its agents via global.serverAgents
     const bridge = this.bridges.get(userId);
-    return bridge !== undefined && bridge.readyState === 1; // WebSocket.OPEN
+    const isBridgeConnected = bridge !== undefined && bridge.readyState === 1; // WebSocket.OPEN
+    
+    // Also check server.js agents (the actual WebSocket server)
+    if (typeof global !== 'undefined' && (global as any).serverAgents) {
+      const serverAgent = (global as any).serverAgents.get(userId);
+      if (serverAgent && serverAgent.readyState === 1) {
+        return true;
+      }
+    }
+    
+    // If WebSocket is not connected, check HTTP API availability
+    // HTTP API works even if WebSocket closes (e.g., 1006 error in Next.js dev mode)
+    if (!isBridgeConnected) {
+      const httpPort = this.getAgentHttpPort(userId);
+      if (httpPort) {
+        // HTTP API is available if port exists in metadata
+        // The agent's HTTP server runs independently of WebSocket
+        return true;
+      }
+    }
+    
+    return isBridgeConnected;
   }
 
   /**
-   * Request operation from agent (legacy method - uses global bridge manager from server.js)
+   * Async version that checks HTTP health endpoint
+   * Use this for more accurate connection status
+   */
+  async isConnectedAsync(userId: string): Promise<boolean> {
+    const { getConnectionStatus } = await import('./connection-status');
+    const info = await getConnectionStatus(userId);
+    return info.status !== "none";
+  }
+
+  /**
+   * Request operation from agent
+   * Prefers HTTP API if available, falls back to WebSocket
    */
   async requestBrowserOperation(
     userId: string,
     operation: string,
     args: Record<string, unknown> = {}
   ): Promise<unknown> {
-    const bridge = this.bridges.get(userId);
+    // Try HTTP API first (more reliable)
+    const httpPort = this.getAgentHttpPort(userId);
+    if (httpPort) {
+      try {
+        const { AgentHttpClient } = await import('./agent-http-client');
+        const client = new AgentHttpClient(httpPort);
+        return await client.executeOperation(operation as any, args);
+      } catch (error) {
+        logger.warn('HTTP API request failed, falling back to WebSocket', {
+          userId,
+          operation,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Fall through to WebSocket
+      }
+    }
+
+    // Fall back to WebSocket
+    let bridge = this.bridges.get(userId);
+    
+    // If not in bridge-manager, check server.js agents
+    if (!bridge && typeof global !== 'undefined' && (global as any).serverAgents) {
+      bridge = (global as any).serverAgents.get(userId);
+    }
     
     if (!bridge) {
       throw new Error(`Agent not connected for user ${userId}`);
@@ -107,16 +168,32 @@ export class BridgeManager {
 
       this.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-      // Send request to browser
+      // Send request via WebSocket
       try {
         bridge.send(JSON.stringify(request));
-        logger.debug('Sent bridge request', { userId, requestId, operation });
+        logger.debug('Sent bridge request via WebSocket', { userId, requestId, operation });
       } catch (error) {
         this.pendingRequests.delete(requestId);
         clearTimeout(timeout);
         reject(error instanceof Error ? error : new Error('Failed to send request'));
       }
     });
+  }
+
+  /**
+   * Get agent HTTP port from metadata, or default to 4001
+   * This allows HTTP API to work even if metadata isn't registered (e.g., WebSocket closed)
+   */
+  private getAgentHttpPort(userId: string): number | null {
+    if (typeof global !== 'undefined' && (global as any).agentMetadata) {
+      const metadata = (global as any).agentMetadata.get(userId);
+      if (metadata && metadata.httpPort) {
+        return metadata.httpPort;
+      }
+    }
+    // Default to 4001 if metadata not available (HTTP-only connection)
+    // This allows tools to work even if WebSocket never connected
+    return 4001;
   }
 
   /**

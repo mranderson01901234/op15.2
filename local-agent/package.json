@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:binaries": "pnpm build && pnpm exec pkg . --targets node18-linux-x64,node18-macos-x64,node18-macos-arm64,node18-win-x64 --output-path ./dist/binaries",
     "start": "node dist/index.js",
     "dev": "tsx index.ts"
   },
@@ -17,11 +18,22 @@
   "devDependencies": {
     "@types/node": "^20",
     "@types/ws": "^8.5.10",
+    "pkg": "^5.8.1",
     "tsx": "^4.7.0",
     "typescript": "^5"
   },
   "engines": {
     "node": ">=20.9.0"
+  },
+  "pkg": {
+    "assets": [],
+    "targets": [
+      "node18-linux-x64",
+      "node18-macos-x64",
+      "node18-macos-arm64",
+      "node18-win-x64"
+    ],
+    "outputPath": "./dist/binaries"
   }
 }
 

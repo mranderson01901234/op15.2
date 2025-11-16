@@ -16,7 +16,6 @@ import { BrowserViewer } from "@/components/browser/browser-viewer";
 import { useWorkspace } from "@/contexts/workspace-context";
 import { useChat, type Message as ChatMessage } from "@/contexts/chat-context";
 import { useChatInput } from "@/contexts/chat-input-context";
-import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { CommandsButton } from "@/components/layout/commands-button";
 import { SignedIn, useAuth } from "@clerk/nextjs";
 import { TopHeader } from "@/components/layout/top-header";
@@ -4273,20 +4272,6 @@ export default function Home() {
             }
           `
         }} />
-        {/* Local Environment Status - Top Left - Visible on desktop */}
-        <div 
-          className="absolute top-4 left-4 z-20"
-          style={{
-            zIndex: 20,
-            position: 'absolute',
-            top: '1rem',
-            left: '1rem',
-            WebkitTransform: 'translateZ(0)',
-            transform: 'translateZ(0)',
-          }}
-        >
-          <LocalEnvConnector />
-        </div>
         {/* Messages Area - Scrollable */}
         <div 
           ref={messagesContainerRefDesktop} 
@@ -4940,20 +4925,6 @@ export default function Home() {
                 }
               `
             }} />
-            {/* Local Environment Status - Top Left - Visible on mobile */}
-            <div 
-              className="absolute top-4 left-4 z-20"
-              style={{
-                zIndex: 20,
-                position: 'absolute',
-                top: '1rem',
-                left: '1rem',
-                WebkitTransform: 'translateZ(0)',
-                transform: 'translateZ(0)',
-              }}
-            >
-              <LocalEnvConnector />
-            </div>
             {/* Messages Area - Scrollable */}
             <div 
               ref={messagesContainerRefMobile} 

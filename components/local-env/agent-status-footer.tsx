@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useUser } from "@clerk/nextjs";
 import { CheckCircle, Terminal, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,38 @@ export function AgentStatusFooter() {
   const [userHomeDirectory, setUserHomeDirectory] = useState<string | undefined>();
   const [isDownloading, setIsDownloading] = useState(false);
   const [platform, setPlatform] = useState<string>("");
+
+  const checkAgentStatus = useCallback(async () => {
+    if (!user || !isEnabled) return;
+    
+    try {
+      // Check actual agent connection status (WebSocket + metadata)
+      const response = await fetch(`/api/users/${user.id}/agent-status`, {
+        cache: 'no-store',
+      });
+      
+      if (response.ok) {
+        const status = await response.json();
+        // Agent is connected only if WebSocket is connected AND metadata exists
+        setIsConnected(status.connected === true);
+        setUserHomeDirectory(status.userHomeDirectory);
+      } else {
+        // Fallback: Check workspace API
+        const workspaceResponse = await fetch(`/api/users/${user.id}/workspace`, {
+          cache: 'no-store',
+        });
+        if (workspaceResponse.ok) {
+          const config = await workspaceResponse.json();
+          setIsConnected(false); // Can't verify WebSocket, assume disconnected
+          setUserHomeDirectory(config.userHomeDirectory);
+        } else {
+          setIsConnected(false);
+        }
+      }
+    } catch (err) {
+      setIsConnected(false);
+    }
+  }, [user, isEnabled]);
 
   useEffect(() => {
     if (user && isLoaded && isEnabled) {
@@ -34,26 +66,7 @@ export function AgentStatusFooter() {
     } else {
       setIsConnected(false);
     }
-  }, [user, isLoaded, isEnabled]);
-
-  const checkAgentStatus = async () => {
-    if (!user || !isEnabled) return;
-    
-    try {
-      const response = await fetch(`/api/users/${user.id}/workspace`);
-      if (response.ok) {
-        const config = await response.json();
-        if (config.userHomeDirectory) {
-          setIsConnected(true);
-          setUserHomeDirectory(config.userHomeDirectory);
-        } else {
-          setIsConnected(false);
-        }
-      }
-    } catch (err) {
-      setIsConnected(false);
-    }
-  };
+  }, [user, isLoaded, isEnabled, checkAgentStatus]);
 
   const handleReinstall = async () => {
     if (!user || !isLoaded || !platform) return;

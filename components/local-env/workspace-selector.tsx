@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type ReactElement } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactElement } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Settings, Home, Globe, FolderOpen, Check, ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,51 @@ export function WorkspaceSelector() {
   const enterPressedRef = useRef<boolean>(false);
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const loadWorkspaceConfig = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      // Use cache: 'no-store' to ensure we always get the latest workspace config
+      const response = await fetch(`/api/users/${user.id}/workspace`, {
+        cache: 'no-store',
+      });
+      if (response.ok) {
+        const config = await response.json();
+        const restrictionLevel = config.restrictionLevel || "unrestricted";
+        const userHomeDirectory = config.userHomeDirectory;
+        
+        // Determine the workspace root based on restriction level
+        let workspaceRoot = '/';
+        if (restrictionLevel === 'home') {
+          workspaceRoot = userHomeDirectory || '/';
+        } else if (restrictionLevel === 'custom') {
+          workspaceRoot = config.workspaceRoot || '/';
+        } else {
+          // unrestricted
+          workspaceRoot = '/';
+        }
+        
+        console.log('Loaded workspace config:', {
+          restrictionLevel,
+          workspaceRoot,
+          userHomeDirectory,
+          configWorkspaceRoot: config.workspaceRoot,
+        });
+        
+        // Update all state with the loaded config
+        setRestrictionLevel(restrictionLevel);
+        setCurrentRoot(workspaceRoot);
+        setCustomPath(restrictionLevel === 'custom' ? workspaceRoot : '');
+        setEditablePath(workspaceRoot);
+        setUserHomeDirectory(userHomeDirectory);
+      } else {
+        console.error('Failed to load workspace config:', response.status, response.statusText);
+      }
+    } catch (error) {
+      console.error("Failed to load workspace config:", error);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user && isLoaded && isEnabled && toggleLoaded) {
       setIsLoading(true);
@@ -60,7 +105,7 @@ export function WorkspaceSelector() {
       setCustomPath("");
       setEditablePath("/");
     }
-  }, [user, isLoaded, isEnabled, toggleLoaded]);
+  }, [user, isLoaded, isEnabled, toggleLoaded, loadWorkspaceConfig]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -126,51 +171,6 @@ export function WorkspaceSelector() {
       }
     }
   }, [selectedSuggestionIndex, showSuggestions]);
-
-  const loadWorkspaceConfig = async () => {
-    if (!user) return;
-
-    try {
-      // Use cache: 'no-store' to ensure we always get the latest workspace config
-      const response = await fetch(`/api/users/${user.id}/workspace`, {
-        cache: 'no-store',
-      });
-      if (response.ok) {
-        const config = await response.json();
-        const restrictionLevel = config.restrictionLevel || "unrestricted";
-        const userHomeDirectory = config.userHomeDirectory;
-        
-        // Determine the workspace root based on restriction level
-        let workspaceRoot = '/';
-        if (restrictionLevel === 'home') {
-          workspaceRoot = userHomeDirectory || '/';
-        } else if (restrictionLevel === 'custom') {
-          workspaceRoot = config.workspaceRoot || '/';
-        } else {
-          // unrestricted
-          workspaceRoot = '/';
-        }
-        
-        console.log('Loaded workspace config:', {
-          restrictionLevel,
-          workspaceRoot,
-          userHomeDirectory,
-          configWorkspaceRoot: config.workspaceRoot,
-        });
-        
-        // Update all state with the loaded config
-        setRestrictionLevel(restrictionLevel);
-        setCurrentRoot(workspaceRoot);
-        setCustomPath(restrictionLevel === 'custom' ? workspaceRoot : '');
-        setEditablePath(workspaceRoot);
-        setUserHomeDirectory(userHomeDirectory);
-      } else {
-        console.error('Failed to load workspace config:', response.status, response.statusText);
-      }
-    } catch (error) {
-      console.error("Failed to load workspace config:", error);
-    }
-  };
 
   const sortDirectoriesByPriority = (dirs: DirectorySuggestion[]): DirectorySuggestion[] => {
     // Common directory names to prioritize (case-insensitive)

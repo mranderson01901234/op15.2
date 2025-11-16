@@ -1,0 +1,19 @@
+{
+  "name": "@op15/installer",
+  "version": "1.0.0",
+  "description": "op15 Local Agent Installer",
+  "main": "installer.js",
+  "bin": "installer.js",
+  "pkg": {
+    "assets": [
+      "../local-agent/dist/index.js"
+    ],
+    "targets": [
+      "node20-linux-x64",
+      "node20-macos-x64",
+      "node20-win-x64"
+    ],
+    "outputPath": "../installers"
+  }
+}
+

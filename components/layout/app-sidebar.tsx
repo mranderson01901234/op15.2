@@ -1,10 +1,8 @@
 "use client";
 
-import { Sidebar, SidebarContent, SidebarHeader, SidebarRail, SidebarTrigger, SidebarFooter } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarRail, SidebarTrigger } from "@/components/ui/sidebar";
 import { SidebarNav } from "./sidebar-nav";
 import { useSidebar } from "@/components/ui/sidebar";
-import { AgentStatusFooter } from "@/components/local-env/agent-status-footer";
-import { LocalEnvToggle } from "@/components/local-env/local-env-toggle";
 import { LocalEnvConnector } from "@/components/local-env/local-env-connector";
 import { cn } from "@/lib/utils";
 
@@ -63,10 +61,6 @@ export function AppSidebar() {
           <LocalEnvConnector isCollapsed={isCollapsed} />
         </div>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border/50">
-        <LocalEnvToggle />
-        <AgentStatusFooter />
-      </SidebarFooter>
     </Sidebar>
   );
 }

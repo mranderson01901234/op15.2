@@ -44,29 +44,6 @@ export async function handleFsList(
 ) {
   const bridgeManager = getBridgeManager();
 
-  // Check if agent is connected
-  const isAgentConnected = bridgeManager.isConnected(context.userId);
-
-  if (!isAgentConnected) {
-    const errorMessage =
-      "⚠️ Local agent required but not connected.\n\n" +
-      "To list files, you must install and run the local agent:\n" +
-      "1. Click 'Enable Local Environment' in the sidebar\n" +
-      "2. Download and install the local agent\n" +
-      "3. Run the agent with your user ID\n" +
-      "4. Wait for connection confirmation\n\n" +
-      "The local agent runs on YOUR machine to access YOUR files.\n" +
-      "This ensures complete isolation between users.";
-
-    logger.error('Agent not connected - refusing to execute on shared server', undefined, {
-      userId: context.userId,
-      operation: 'fs.list',
-      path: args.path,
-    });
-
-    throw new Error(errorMessage);
-  }
-
   try {
     logger.debug('Routing fs.list to agent', {
       userId: context.userId,
@@ -74,7 +51,7 @@ export async function handleFsList(
       depth: args.depth || 0,
     });
 
-    // Route to user's local agent via WebSocket
+    // Route to user's local agent (HTTP-first, falls back to WebSocket)
     const fsEntries = await bridgeManager.requestBrowserOperation(
       context.userId,
       'fs.list',
@@ -150,12 +127,27 @@ export async function handleFsList(
       error: errorMessage,
     });
 
+    // Check if it's a connection error
+    if (errorMessage.includes('not connected') || errorMessage.includes('not registered') || errorMessage.includes('Agent HTTP API failed')) {
+      throw new Error(
+        "⚠️ Local agent required but not connected.\n\n" +
+        "To list files, you must:\n" +
+        "1. Install the local agent (click 'Install Local Agent' in sidebar)\n" +
+        "2. Run the installer you downloaded\n" +
+        "3. Approve permissions in the sidebar (Agent Permissions panel)\n" +
+        "4. Wait for connection confirmation\n\n" +
+        "The local agent runs on YOUR machine to access YOUR files.\n" +
+        "This ensures complete isolation between users."
+      );
+    }
+
     throw new Error(
       `❌ Failed to list files: ${errorMessage}\n\n` +
       "Please check that:\n" +
       "1. Your local agent is running\n" +
-      "2. The path exists and is accessible\n" +
-      "3. You have permission to access this directory"
+      "2. Permissions are approved (check sidebar)\n" +
+      "3. The path exists and is accessible\n" +
+      "4. You have permission to access this directory"
     );
   }
 }
@@ -169,13 +161,6 @@ export async function handleFsRead(
   context: UserContext
 ) {
   const bridgeManager = getBridgeManager();
-
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to read files.\n\n" +
-      "Please install and run the local agent to access YOUR files."
-    );
-  }
 
   try {
     logger.debug('Routing fs.read to agent', {
@@ -201,9 +186,19 @@ export async function handleFsRead(
       error: errorMessage,
     });
 
+    if (errorMessage.includes('not connected') || errorMessage.includes('not registered') || errorMessage.includes('Agent HTTP API failed')) {
+      throw new Error(
+        "⚠️ Local agent required but not connected.\n\n" +
+        "Please install the local agent and approve permissions to read files."
+      );
+    }
+
     throw new Error(
       `❌ Failed to read file: ${errorMessage}\n\n` +
-      "Please check that the file exists and you have read permissions."
+      "Please check that:\n" +
+      "1. Your local agent is running\n" +
+      "2. Permissions are approved\n" +
+      "3. The file exists and you have read permissions."
     );
   }
 }
@@ -222,13 +217,6 @@ export async function handleFsWrite(
   context: UserContext
 ) {
   const bridgeManager = getBridgeManager();
-
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to write files.\n\n" +
-      "Please install and run the local agent to modify YOUR files."
-    );
-  }
 
   try {
     logger.debug('Routing fs.write to agent', {
@@ -274,13 +262,6 @@ export async function handleFsDelete(
 ) {
   const bridgeManager = getBridgeManager();
 
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to delete files.\n\n" +
-      "Please install and run the local agent."
-    );
-  }
-
   try {
     logger.debug('Routing fs.delete to agent', {
       userId: context.userId,
@@ -322,13 +303,6 @@ export async function handleFsMove(
   context: UserContext
 ) {
   const bridgeManager = getBridgeManager();
-
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to move files.\n\n" +
-      "Please install and run the local agent."
-    );
-  }
 
   try {
     logger.debug('Routing fs.move to agent', {
@@ -380,13 +354,6 @@ export async function handleFsCopy(
 ) {
   const bridgeManager = getBridgeManager();
 
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to copy files.\n\n" +
-      "Please install and run the local agent."
-    );
-  }
-
   // TODO: Implement fs.copy in local-agent/index.ts
   throw new Error(
     "❌ fs.copy is not yet implemented in the local agent.\n\n" +
@@ -404,13 +371,6 @@ export async function handleFsCreate(
   context: UserContext
 ) {
   const bridgeManager = getBridgeManager();
-
-  if (!bridgeManager.isConnected(context.userId)) {
-    throw new Error(
-      "⚠️ Local agent required to create directories.\n\n" +
-      "Please install and run the local agent."
-    );
-  }
 
   // For directory creation, we can use fs.write with a temporary file
   // or just use mkdir functionality if needed

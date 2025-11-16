@@ -21,6 +21,9 @@ const handle = app.getRequestHandler();
 const agents = new Map(); // Local Node.js agents - full filesystem access
 const pendingRequests = new Map();
 
+// Expose agents Map globally so BridgeManager can access it
+global.serverAgents = agents;
+
 function generateRequestId(userId) {
   return `${userId}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 }
@@ -143,16 +146,20 @@ app.prepare().then(() => {
     // Handle messages from browser
     ws.on('message', (data) => {
       try {
+        console.log('[bridge] incoming message, size:', data.length);
         const message = JSON.parse(data.toString());
+        console.log('[bridge] parsed message type:', message.type);
         
         // Handle ping/pong messages (if sent as JSON)
         if (message.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
+          console.log('[bridge] responded to ping');
           return;
         }
         
         // Handle agent metadata (home directory, platform info, filesystem index)
         if (message.type === 'agent-metadata') {
+          console.log('[bridge] processing agent-metadata');
           console.log('Received agent metadata', { 
             userId, 
             homeDirectory: message.homeDirectory,
@@ -164,10 +171,17 @@ app.prepare().then(() => {
           if (!global.agentMetadata) {
             global.agentMetadata = new Map();
           }
-          global.agentMetadata.set(userId, {
+          const metadata = {
             homeDirectory: message.homeDirectory,
             platform: message.platform,
             filesystemIndex: message.filesystemIndex || null,
+            httpPort: message.httpPort || 4001, // Store HTTP API port
+          };
+          global.agentMetadata.set(userId, metadata);
+          console.log('[bridge] ✅ Metadata stored (persists even if WebSocket closes)', { 
+            userId, 
+            httpPort: metadata.httpPort,
+            hasMetadata: true 
           });
           
           // Store filesystem index separately for quick access
@@ -181,6 +195,17 @@ app.prepare().then(() => {
               indexedAt: message.filesystemIndex.indexedAt,
             });
             console.log(`📁 Cached filesystem index for user ${userId}: ${message.filesystemIndex.indexedPaths.length} paths`);
+          }
+          
+          console.log('[bridge] agent-metadata processed successfully, ws.readyState:', ws.readyState, 'ws.OPEN:', ws.OPEN);
+          console.log('[bridge] NOT closing socket, handler complete');
+          
+          // TEST: Send immediate acknowledgment to keep connection active
+          try {
+            ws.send(JSON.stringify({ type: 'metadata-ack', received: true }));
+            console.log('[bridge] Sent metadata-ack to agent');
+          } catch (err) {
+            console.error('[bridge] Failed to send metadata-ack:', err);
           }
           
           return;
@@ -204,17 +229,26 @@ app.prepare().then(() => {
             console.warn('Received response for unknown request', { userId, requestId: id });
           }
         } else {
-          console.log('Received message from browser', { userId, messageType: message.type || 'unknown' });
+          console.log('[bridge] Received other message', { userId, messageType: message.type || 'unknown' });
         }
       } catch (error) {
-        console.error('Failed to parse bridge message', { userId, error, data: data.toString().substring(0, 100) });
+        console.error('[bridge] MESSAGE HANDLER ERROR:', { userId, error: error.message, stack: error.stack, dataPreview: data.toString().substring(0, 100) });
+        // DO NOT close the socket here - let it stay alive to debug
       }
     });
 
     // Handle disconnection
     ws.on('close', (code, reason) => {
       clearInterval(pingInterval);
-      console.log(`Agent disconnected`, { userId, code, reason: reason.toString() });
+      const stackTrace = new Error().stack;
+      console.log('[bridge] SOCKET CLOSED', { 
+        userId, 
+        code, 
+        reason: reason.toString(), 
+        wasConnected: agents.has(userId),
+        readyState: ws.readyState,
+        stackTrace: stackTrace?.split('\n').slice(0, 5).join('\n')
+      });
       agents.delete(userId);
       // Clean up pending requests
       const requestsToClean = Array.from(pendingRequests.entries())
@@ -227,9 +261,23 @@ app.prepare().then(() => {
 
     ws.on('error', (error) => {
       clearInterval(pingInterval);
-      console.error(`Agent error`, { userId, error: error.message });
+      console.error('[bridge] SOCKET ERROR:', { 
+        userId, 
+        error: error.message, 
+        stack: error.stack,
+        code: error.code,
+        errno: error.errno,
+        syscall: error.syscall
+      });
       agents.delete(userId);
     });
+    
+    // Monitor for unexpected closes
+    const originalClose = ws.close.bind(ws);
+    ws.close = function(...args) {
+      console.log('[bridge] EXPLICIT CLOSE CALLED', { userId, args, stackTrace: new Error().stack?.split('\n').slice(0, 10).join('\n') });
+      return originalClose(...args);
+    };
 
     // Send connection confirmation
     try {
@@ -249,7 +297,50 @@ app.prepare().then(() => {
     },
 
     async requestBrowserOperation(userId, operation, args = {}) {
-      // Request operation from agent
+      // Try HTTP API first (more reliable)
+      const metadata = global.agentMetadata?.get(userId);
+      const httpPort = metadata?.httpPort || 4001;
+      
+      if (httpPort) {
+        try {
+          // Map operation names to HTTP endpoints
+          const endpointMap = {
+            'fs.list': '/fs/list',
+            'fs.read': '/fs/read',
+            'fs.write': '/fs/write',
+            'fs.delete': '/fs/delete',
+            'fs.move': '/fs/move',
+            'exec.run': '/execute',
+          };
+          const endpoint = endpointMap[operation] || '/execute';
+          
+          // Make HTTP request directly (avoid TypeScript import issues)
+          const response = await fetch(`http://127.0.0.1:${httpPort}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(args),
+          });
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || `HTTP ${response.status}`);
+          }
+
+          const result = await response.json();
+          console.log(`HTTP API request succeeded`, { userId, operation, httpPort, endpoint });
+          return result;
+        } catch (error) {
+          console.warn(`HTTP API request failed, falling back to WebSocket`, {
+            userId,
+            operation,
+            httpPort,
+            error: error.message || String(error),
+          });
+          // Fall through to WebSocket
+        }
+      }
+
+      // Fall back to WebSocket
       const agent = agents.get(userId);
 
       if (!agent) {
