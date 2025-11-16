@@ -129,10 +129,10 @@ export async function GET(req: NextRequest) {
           serverUrl,
           binaryPath,
         });
-        // Desktop entry launcher (.desktop), AppImage (.AppImage), or shell script (.sh)
-        if (installerPath.endsWith('.desktop')) {
-          filename = 'OP15-Agent-Installer.desktop';
-          contentType = 'application/x-desktop';
+        // Launcher script (.run), AppImage (.AppImage), or shell script (.sh)
+        if (installerPath.endsWith('.run')) {
+          filename = 'OP15-Agent-Installer.run';
+          contentType = 'application/x-sh';
         } else if (installerPath.endsWith('.AppImage')) {
           filename = 'OP15-Agent-Installer.AppImage';
           contentType = 'application/x-executable';

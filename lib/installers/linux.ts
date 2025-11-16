@@ -445,37 +445,49 @@ Terminal=false
 }
 
 /**
- * Build desktop entry launcher for AppImage
- * Creates a .desktop file that can be double-clicked without terminal
+ * Build launcher script for AppImage
+ * Creates a small shell script that extracts and runs AppImage
+ * File managers can execute this directly when double-clicked
  */
 async function buildDesktopEntryLauncher(
   config: LinuxInstallerConfig,
   appImagePath: string
 ): Promise<string> {
   const outputDir = path.join(process.cwd(), 'installers');
-  const outputFile = path.join(outputDir, 'OP15-Agent-Installer.desktop');
+  const outputFile = path.join(outputDir, 'OP15-Agent-Installer.run');
 
   // Read AppImage to embed it
   const appImageBuffer = readFileSync(appImagePath);
   const appImageBase64 = appImageBuffer.toString('base64');
 
-  // Create desktop entry that extracts and runs AppImage
-  // Uses %k to get the desktop file path, extracts AppImage next to it, makes it executable, runs it
-  const desktopContent = `[Desktop Entry]
-Name=OP15 Agent Installer
-Comment=Install OP15 Local Agent
-Exec=bash -c 'cd "$(dirname "%k")" && INSTALLER_DIR="$HOME/Downloads" && APPIMAGE="$INSTALLER_DIR/OP15-Agent-Installer.AppImage" && if [ ! -f "$APPIMAGE" ] || [ ! -x "$APPIMAGE" ]; then echo "${appImageBase64}" | base64 -d > "$APPIMAGE" && chmod +x "$APPIMAGE"; fi && "$APPIMAGE"'
-Icon=application-x-executable
-Type=Application
-Categories=Utility;
-Terminal=false
-MimeType=application/x-desktop;
+  // Create self-extracting launcher script
+  // When double-clicked, file manager will execute this script
+  // Script extracts AppImage, makes it executable, runs it
+  const launcherScript = `#!/bin/bash
+# OP15 Agent Installer Launcher
+# Double-click this file to install
+
+set -e
+
+# Get directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APPIMAGE="$SCRIPT_DIR/OP15-Agent-Installer.AppImage"
+
+# Extract AppImage if not exists or not executable
+if [ ! -f "$APPIMAGE" ] || [ ! -x "$APPIMAGE" ]; then
+  echo "Extracting installer..."
+  echo "${appImageBase64}" | base64 -d > "$APPIMAGE"
+  chmod +x "$APPIMAGE"
+fi
+
+# Run the AppImage installer
+exec "$APPIMAGE"
 `;
 
-  writeFileSync(outputFile, desktopContent);
+  writeFileSync(outputFile, launcherScript);
   chmodSync(outputFile, 0o755);
 
-  console.log(`✅ Desktop entry launcher built: ${outputFile}`);
+  console.log(`✅ Launcher script built: ${outputFile}`);
   return outputFile;
 }
 
