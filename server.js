@@ -297,58 +297,43 @@ app.prepare().then(() => {
     },
 
     async requestBrowserOperation(userId, operation, args = {}) {
-      // Try HTTP API first (more reliable)
-      const metadata = global.agentMetadata?.get(userId);
-      const httpPort = metadata?.httpPort || 4001;
+      // Server-to-agent communication uses WebSocket (agent connects TO server)
+      // HTTP API is only for browser-to-agent communication (client-side)
+      // In production, server cannot reach client's localhost, so we use WebSocket only
       
-      if (httpPort) {
-        try {
-          // Map operation names to HTTP endpoints
-          const endpointMap = {
-            'fs.list': '/fs/list',
-            'fs.read': '/fs/read',
-            'fs.write': '/fs/write',
-            'fs.delete': '/fs/delete',
-            'fs.move': '/fs/move',
-            'exec.run': '/execute',
-          };
-          const endpoint = endpointMap[operation] || '/execute';
-          
-          // Make HTTP request directly (avoid TypeScript import issues)
-          const response = await fetch(`http://127.0.0.1:${httpPort}${endpoint}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(args),
-          });
-
-          if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-            throw new Error(error.error || `HTTP ${response.status}`);
-          }
-
-          const result = await response.json();
-          console.log(`HTTP API request succeeded`, { userId, operation, httpPort, endpoint });
-          return result;
-        } catch (error) {
-          console.warn(`HTTP API request failed, falling back to WebSocket`, {
-            userId,
-            operation,
-            httpPort,
-            error: error.message || String(error),
-          });
-          // Fall through to WebSocket
-        }
-      }
-
-      // Fall back to WebSocket
       const agent = agents.get(userId);
 
       if (!agent) {
-        throw new Error(`No agent connection available for user ${userId}`);
+        // Check if we have metadata (agent might be HTTP-only, not WebSocket connected)
+        const metadata = global.agentMetadata?.get(userId);
+        if (metadata?.httpPort) {
+          // Agent exists but WebSocket not connected
+          // This is OK - agent can still work via HTTP from browser
+          // But server-side operations need WebSocket
+          throw new Error(
+            `Agent WebSocket not connected for user ${userId}. ` +
+            `The agent is running (HTTP API available on port ${metadata.httpPort}), ` +
+            `but WebSocket connection is required for server-side operations. ` +
+            `Please ensure the agent is connected via WebSocket.`
+          );
+        }
+        throw new Error(
+          `No agent connection available for user ${userId}. ` +
+          `Please ensure your local agent is running and connected.`
+        );
       }
 
       if (agent.readyState !== 1) {
-        throw new Error(`Agent not ready for user ${userId}`);
+        const readyStateNames = {
+          0: 'CONNECTING',
+          1: 'OPEN',
+          2: 'CLOSING',
+          3: 'CLOSED'
+        };
+        throw new Error(
+          `Agent WebSocket not ready for user ${userId} (state: ${readyStateNames[agent.readyState] || agent.readyState}). ` +
+          `Please ensure the agent is connected and try again.`
+        );
       }
 
       const requestId = generateRequestId(userId);
