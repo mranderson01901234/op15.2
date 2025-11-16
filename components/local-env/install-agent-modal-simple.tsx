@@ -71,8 +71,82 @@ export function InstallAgentModal({
     setIsInstalling(true);
     setError(null);
     setIsConnected(false);
-    setInstallStep("Downloading installer...");
+    setInstallStep("Starting automatic installation...");
 
+    try {
+      // Check if browser bridge is available for automatic installation
+      const { LocalEnvBridge } = await import('@/lib/browser/local-env-bridge');
+      const bridge = LocalEnvBridge.getInstance();
+      
+      if (!bridge || !bridge.isConnected) {
+        // Fallback to manual download if bridge not connected
+        setInstallStep("Browser bridge not connected. Downloading installer...");
+        await handleManualDownload();
+        return;
+      }
+
+      // AUTOMATIC INSTALLATION via browser bridge
+      setInstallStep("Downloading installer...");
+      
+      // Get download URL
+      const downloadUrl = `/api/agent/download?platform=${platform}`;
+      
+      // Determine filename and installation commands
+      let filename: string;
+      let installCommand: string;
+      
+      if (platform === 'win32') {
+        filename = 'OP15-Agent-Setup.exe';
+        const downloadPath = `$env:USERPROFILE\\Downloads\\${filename}`;
+        installCommand = `powershell -Command "Invoke-WebRequest -Uri '${window.location.origin}${downloadUrl}' -OutFile '${downloadPath}'; Start-Process -FilePath '${downloadPath}' -Wait"`;
+      } else {
+        // Linux
+        filename = 'OP15-Agent-Installer.AppImage';
+        const downloadPath = `$HOME/Downloads/${filename}`;
+        installCommand = `curl -L -o "${downloadPath}" "${window.location.origin}${downloadUrl}" && chmod +x "${downloadPath}" && "${downloadPath}"`;
+      }
+
+      setInstallStep("Installing agent automatically...\nThis may take a minute...");
+
+      // Execute installation via browser bridge
+      // The bridge will execute the command on the user's local machine
+      const { getBridgeManager } = await import('@/lib/infrastructure/bridge-manager');
+      const bridgeManager = getBridgeManager();
+      
+      const result = await bridgeManager.requestBrowserOperation(
+        userId,
+        'exec.run',
+        {
+          command: installCommand,
+          timeoutMs: 300000, // 5 minutes timeout
+        }
+      ) as { exitCode: number; stdout: string; stderr: string };
+
+      if (result.exitCode !== 0) {
+        throw new Error(`Installation failed: ${result.stderr || result.stdout}`);
+      }
+
+      setInstallStep("✅ Installation complete!\n\nWaiting for agent to connect...");
+      setIsComplete(true);
+      
+      // Mark as installed
+      localStorage.setItem("op15-agent-installed", "installed");
+
+    } catch (error) {
+      console.error("Auto-install error:", error);
+      
+      // If automatic installation fails, fall back to manual download
+      if (error instanceof Error && error.message.includes('not connected')) {
+        setInstallStep("Browser bridge not available. Downloading installer for manual installation...");
+        await handleManualDownload();
+      } else {
+        setError(error instanceof Error ? error.message : "Installation failed");
+        setIsInstalling(false);
+      }
+    }
+  };
+
+  const handleManualDownload = async () => {
     try {
       // Download installer from API
       const response = await fetch(`/api/agent/download?platform=${platform}`, {
@@ -90,15 +164,14 @@ export function InstallAgentModal({
       // Get the installer file as blob
       const blob = await response.blob();
       
-      // Determine filename based on platform (must match download endpoint)
+      // Determine filename based on platform
       let filename: string;
       if (platform === 'win32') {
         filename = 'OP15-Agent-Setup.exe';
       } else if (platform === 'darwin') {
-        filename = 'OP15-Agent-Installer.sh'; // macOS deferred, but use same format
+        filename = 'OP15-Agent-Installer.sh';
       } else {
-        // Linux: AppImage for true double-click, fallback to .sh
-        filename = 'OP15-Agent-Installer.AppImage'; // Will be .sh if build fails
+        filename = 'OP15-Agent-Installer.AppImage';
       }
 
       // Create download link and trigger download
@@ -114,23 +187,16 @@ export function InstallAgentModal({
       // Mark as downloaded
       localStorage.setItem("op15-agent-installed", "downloaded");
 
-      // Show instructions based on platform
+      // Show instructions
       let instructions: string;
       if (platform === 'win32') {
-        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically\n\nYou may see a Windows security prompt - click "Yes" to allow the installation.`;
+        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Double-click "${filename}"\n3. Follow the installation wizard\n4. The agent will start automatically`;
       } else {
-        if (filename.endsWith('.AppImage')) {
-          instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder in your file manager\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Close Properties window\n5. Double-click "${filename}" to run\n6. The agent will install automatically\n\nThat's it! No terminal commands needed.`;
-        } else {
-          instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click the file to run\n5. The agent will install and start automatically\n\nAlternative: Open Terminal and run:\n  cd ~/Downloads && ./${filename}`;
-        }
+        instructions = `✅ Installer downloaded!\n\nTo complete installation:\n1. Open your Downloads folder\n2. Right-click "${filename}" → Properties → Permissions\n3. Check "Allow executing file as program"\n4. Double-click "${filename}" to run`;
       }
 
       setInstallStep(instructions);
       setIsComplete(true);
-
-      // Start polling for connection
-      // The agent should connect within 10-30 seconds after installation
 
     } catch (error) {
       console.error("Download error:", error);
