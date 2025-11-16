@@ -102,15 +102,10 @@ fi
 # Create installation directory
 mkdir -p "$INSTALL_DIR"
 
-# Extract binary from this script
-# Binary data starts after this line
-ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
-tail -n+$ARCHIVE_START "$0" > "$BINARY_PATH"
-chmod +x "$BINARY_PATH"
-
 show_progress "📦 Extracting agent binary..."
 
 # Extract binary from this script
+# Binary data starts after this line
 ARCHIVE_START=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' "$0")
 tail -n+$ARCHIVE_START "$0" > "$BINARY_PATH"
 chmod +x "$BINARY_PATH"
