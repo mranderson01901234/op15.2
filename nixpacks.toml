@@ -8,7 +8,8 @@ cmds = [
 
 [phases.build]
 cmds = [
-  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build"
+  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build",
+  "export PATH=\"$PATH:$(npm config get prefix)/bin\" && pnpm run build:agent:binaries || echo 'Warning: Agent binary build failed - installers will not be available'"
 ]
 
 [start]
