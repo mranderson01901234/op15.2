@@ -63,8 +63,9 @@ export function AgentPermissionsPanel() {
       }
       
       // Fallback: use connection status (may not have permissions info)
+      // At this point, newStatus is guaranteed to be "http-only" or "full" (not "none")
       setStatus({
-        connected: newStatus !== "none",
+        connected: true,
         userId: user.id,
         hasPermissions: connectionInfo.metadata?.hasPermissions || false,
         mode: connectionInfo.metadata?.mode || null,
